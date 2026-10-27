@@ -17,7 +17,8 @@ class ProjectChecks(unittest.TestCase):
             "Include/MomentumScalper/Logger.mqh",
             "Config/EURUSD_Default.set",
             "Docs/README.md", "Docs/STRATEGY.md", "Docs/RISK.md",
-            "Docs/BACKTEST.md", "Tests/TEST_PLAN.md", "Tests/UnitTests.mq5",
+            "Docs/BACKTEST.md", "Docs/TRADINGVIEW.md", "TradingView/EURUSD_Momentum_Scalper_Indicator.pine",
+            "Tests/TEST_PLAN.md", "Tests/UnitTests.mq5",
         ]
         for item in expected:
             with self.subTest(item=item):
@@ -48,6 +49,16 @@ class ProjectChecks(unittest.TestCase):
         self.assertIn("TRADE_RETCODE_DONE_PARTIAL", execution)
         self.assertIn("TRADE_TRANSACTION_DEAL_ADD", execution)
         self.assertIn("SYMBOL_TRADE_FREEZE_LEVEL", execution)
+
+    def test_tradingview_indicator_is_not_a_strategy(self):
+        pine = (ROOT / "TradingView/EURUSD_Momentum_Scalper_Indicator.pine").read_text()
+        self.assertTrue(pine.startswith("//@version=6"))
+        self.assertIn("indicator(", pine)
+        self.assertIn("alertcondition(buyPulse", pine)
+        self.assertIn("alertcondition(sellPulse", pine)
+        self.assertIn("varip array<float>", pine)
+        self.assertNotIn("strategy(", pine)
+        self.assertNotRegex(pine, r"strategy\.(entry|exit|order)\(")
 
     def test_braces_balance(self):
         for path in list((ROOT / "Experts").glob("*.mq5")) + list((ROOT / "Include").rglob("*.mqh")) + list((ROOT / "Tests").glob("*.mq5")):
