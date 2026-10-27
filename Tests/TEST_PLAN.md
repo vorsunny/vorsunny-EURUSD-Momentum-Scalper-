@@ -46,4 +46,5 @@ Some scenarios require a scripted fixture, a broker demo, or tester support for 
 
 - Pine v6 indicator and strategy sources pass static repository checks for expected declarations, chart alerts/strategy order calls, absence of strategy orders in the indicator, and balanced braces.
 - The TradingView Pine Editor and Strategy Tester were not available in this environment. Neither Pine script has been compiled or run there; no performance metrics are reported.
-- In TradingView, run the strategy on EURUSD 1-minute bars for Jan–Jun 2026, freeze parameters, then run Jul–Sep 2026 out-of-sample. Confirm symbol point value and quantity units, and set actual commission/slippage in Strategy Properties before interpreting results.
+- Version 1.1 corrects FX pip sizing to use quote-currency convention and adds a strategy-equity daily-loss lockout/status panel to the Strategy Tester proxy. These changes have not yet been compiled in Pine Editor.
+- In TradingView, run the strategy on EURUSD 1-minute bars for Jan–Jun 2026, freeze parameters, then run Jul–Sep 2026 out-of-sample. Confirm symbol point value and quantity units, verify daily-lock behavior around the selected timezone's day boundary, and set actual commission/slippage in Strategy Properties before interpreting results.

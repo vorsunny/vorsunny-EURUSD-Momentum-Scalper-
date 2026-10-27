@@ -1,5 +1,5 @@
 //@version=6
-indicator("EURUSD Momentum Scalper Indicator v1.0", shorttitle="EURUSD MomScalp", overlay=true, max_labels_count=50)
+indicator("EURUSD Momentum Scalper Indicator v1.1", shorttitle="EURUSD MomScalp", overlay=true, max_labels_count=50)
 
 // Signals and alerting only. Pine indicators cannot submit broker orders or enforce account risk.
 int tickWindow = input.int(30, "Rolling sample window", minval=2, maxval=512)
@@ -24,7 +24,9 @@ float pipSizeOverride = input.float(0.0, "Pip size override (0 = auto)", minval=
 bool requireEURUSD = input.bool(true, "Require EURUSD chart")
 
 int CAPACITY = 512
-float autoPip = syminfo.currency == "JPY" ? (syminfo.mintick < 0.01 ? syminfo.mintick * 10.0 : syminfo.mintick) : (syminfo.mintick < 0.0001 ? syminfo.mintick * 10.0 : syminfo.mintick)
+// FX pip size is a quote-currency convention, not a function of feed precision.
+// This handles fractional and non-fractional EURUSD quotes consistently.
+float autoPip = syminfo.type == "forex" ? (syminfo.currency == "JPY" ? 0.01 : 0.0001) : (syminfo.mintick < 0.0001 ? syminfo.mintick * 10.0 : syminfo.mintick)
 float pip = pipSizeOverride > 0.0 ? pipSizeOverride : autoPip
 bool isEURUSD = syminfo.basecurrency == "EUR" and syminfo.currency == "USD"
 bool symbolAllowed = not requireEURUSD or isEURUSD

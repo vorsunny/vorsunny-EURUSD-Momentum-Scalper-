@@ -1,5 +1,5 @@
 //@version=6
-strategy("EURUSD Momentum Scalper Bar Proxy v1.0", shorttitle="EURUSD MomScalp BT", overlay=true, initial_capital=10000, currency=currency.EUR, pyramiding=0, default_qty_type=strategy.fixed, default_qty_value=10000, commission_type=strategy.commission.cash_per_order, commission_value=0.0, slippage=0, process_orders_on_close=false, calc_on_every_tick=false, max_labels_count=50)
+strategy("EURUSD Momentum Scalper Bar Proxy v1.1", shorttitle="EURUSD MomScalp BT", overlay=true, initial_capital=10000, currency=currency.EUR, pyramiding=0, default_qty_type=strategy.fixed, default_qty_value=10000, commission_type=strategy.commission.cash_per_order, commission_value=0.0, slippage=0, process_orders_on_close=false, calc_on_every_tick=false, max_labels_count=50)
 
 // Historical bar-close proxy for the realtime indicator. It is not tick-accurate.
 int tickWindow = input.int(30, "Rolling window (bars)", minval=2, maxval=512)
@@ -14,6 +14,8 @@ int cooldownSeconds = input.int(30, "Minimum time between entries (seconds)", mi
 int maxTradesPerDay = input.int(30, "Maximum entries per day", minval=1, maxval=500)
 float maxWindowRangePips = input.float(8.0, "Maximum window range (pips); 0 disables", minval=0.0, step=0.1)
 float maxSingleBarJumpPips = input.float(5.0, "Maximum one-bar jump (pips); 0 disables", minval=0.0, step=0.1)
+float maxDailyLossPercent = input.float(1.0, "Maximum daily equity loss (%); 0 disables", minval=0.0, maxval=50.0, step=0.1)
+bool closeOnDailyLoss = input.bool(true, "Close open strategy position at daily loss limit")
 float quantityStep = input.float(1000.0, "Quantity step (feed units)", minval=1.0, step=1.0)
 float minimumQuantity = input.float(1000.0, "Minimum quantity (feed units)", minval=1.0, step=1.0)
 float maximumQuantity = input.float(1000000.0, "Maximum quantity (feed units)", minval=1.0, step=1000.0)
@@ -27,7 +29,9 @@ float pipSizeOverride = input.float(0.0, "Pip size override (0 = auto)", minval=
 bool requireEURUSD = input.bool(true, "Require EURUSD chart")
 
 int CAPACITY = 512
-float autoPip = syminfo.currency == "JPY" ? (syminfo.mintick < 0.01 ? syminfo.mintick * 10.0 : syminfo.mintick) : (syminfo.mintick < 0.0001 ? syminfo.mintick * 10.0 : syminfo.mintick)
+// FX pip size is a quote-currency convention, not a function of feed precision.
+// This handles fractional and non-fractional EURUSD quotes consistently.
+float autoPip = syminfo.type == "forex" ? (syminfo.currency == "JPY" ? 0.01 : 0.0001) : (syminfo.mintick < 0.0001 ? syminfo.mintick * 10.0 : syminfo.mintick)
 float pip = pipSizeOverride > 0.0 ? pipSizeOverride : autoPip
 bool isEURUSD = syminfo.basecurrency == "EUR" and syminfo.currency == "USD"
 bool symbolAllowed = not requireEURUSD or isEURUSD
@@ -39,6 +43,8 @@ var int latchedDirection = 0
 var int lastEntryTime = na
 var int activeDay = na
 var int entriesToday = 0
+var float dayStartEquity = na
+var bool dailyLossLocked = false
 var float lastStop = na
 var float lastTarget = na
 var int lastSignalDirection = 0
@@ -84,6 +90,14 @@ int dayId = year(sampleTime, sessionTimezone) * 10000 + month(sampleTime, sessio
 if na(activeDay) or dayId != activeDay
     activeDay := dayId
     entriesToday := 0
+    dayStartEquity := strategy.equity
+    dailyLossLocked := false
+
+float dailyPnlPercent = not na(dayStartEquity) and dayStartEquity > 0.0 ? (strategy.equity - dayStartEquity) / dayStartEquity * 100.0 : na
+if maxDailyLossPercent > 0.0 and not na(dailyPnlPercent) and dailyPnlPercent <= -maxDailyLossPercent
+    dailyLossLocked := true
+if dailyLossLocked and closeOnDailyLoss and strategy.position_size != 0
+    strategy.close_all(comment="Daily equity loss limit")
 
 int candidateDirection = 0
 if acceptedBar and jumpAllowed and not na(momentumPips) and volatilityAllowed
@@ -105,7 +119,7 @@ bool flat = strategy.position_size == 0
 
 if candidateDirection != 0
     latchedDirection := candidateDirection
-    if cooldownPassed and dailyLimitPassed and flat and quantityAllowed
+    if cooldownPassed and dailyLimitPassed and not dailyLossLocked and flat and quantityAllowed
         lastSignalDirection := candidateDirection
         lastEntryTime := sampleTime
         entriesToday += 1
@@ -128,3 +142,19 @@ plot(lastTarget, title="Latest indicative target", color=color.new(color.green, 
 plot(momentumPips, title="Momentum (pips)", color=color.new(color.blue, 100), display=display.data_window)
 plotchar(lastSignalDirection == 1 and candidateDirection == 1, title="BUY signal", char="▲", location=location.belowbar, color=color.green, size=size.tiny)
 plotchar(lastSignalDirection == -1 and candidateDirection == -1, title="SELL signal", char="▼", location=location.abovebar, color=color.red, size=size.tiny)
+
+var table status = table.new(position.top_right, 2, 5, border_width=1)
+if barstate.islast
+    string signalState = not symbolAllowed ? "EURUSD required" : not validPrice ? "Invalid price" : not spreadAllowed ? "Spread blocked" : not sessionAllowed ? "Outside session" : sampleCount < tickWindow ? "Warming buffer" : not jumpAllowed ? "Price jump filtered" : not volatilityAllowed ? "Volatility blocked" : dailyLossLocked ? "Daily loss locked" : entriesToday >= maxTradesPerDay ? "Daily trade limit" : not cooldownPassed ? "Entry cooldown" : not flat ? "Position open" : not quantityAllowed ? "Risk size below minimum" : "Ready"
+    string momentumText = na(momentumPips) ? "Unavailable" : str.tostring(momentumPips, "#.###") + " pips"
+    string dailyText = na(dailyPnlPercent) ? "Unavailable" : str.tostring(dailyPnlPercent, "#.##") + "%"
+    table.cell(status, 0, 0, "Momentum proxy", bgcolor=color.new(color.blue, 65), text_color=color.white)
+    table.cell(status, 1, 0, timeframe.period + " bars", bgcolor=color.new(color.blue, 65), text_color=color.white)
+    table.cell(status, 0, 1, "Momentum", text_color=color.white)
+    table.cell(status, 1, 1, momentumText, text_color=color.white)
+    table.cell(status, 0, 2, "Daily equity P&L", text_color=color.white)
+    table.cell(status, 1, 2, dailyText, text_color=color.white)
+    table.cell(status, 0, 3, "Entries today", text_color=color.white)
+    table.cell(status, 1, 3, str.tostring(entriesToday) + " / " + str.tostring(maxTradesPerDay), text_color=color.white)
+    table.cell(status, 0, 4, "Status", text_color=color.white)
+    table.cell(status, 1, 4, signalState, text_color=color.white)
