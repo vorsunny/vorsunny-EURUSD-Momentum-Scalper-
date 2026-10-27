@@ -1,0 +1,1 @@
+# vorsunny-EURUSD-Momentum-Scalper-
