@@ -132,7 +132,8 @@ if candidateDirection != 0
             strategy.entry("Short", strategy.short, qty=quantity, comment="Momentum SELL")
             strategy.exit("Short bracket", from_entry="Short", stop=lastStop, limit=lastTarget)
 
-if strategy.opentrades > 0
+// The daily-loss close takes priority so the same bar cannot submit two close requests.
+if strategy.opentrades > 0 and not (dailyLossLocked and closeOnDailyLoss)
     int openedAt = strategy.opentrades.entry_time(0)
     if time_close - openedAt >= maxHoldSeconds * 1000
         strategy.close_all(comment="Maximum holding time")
