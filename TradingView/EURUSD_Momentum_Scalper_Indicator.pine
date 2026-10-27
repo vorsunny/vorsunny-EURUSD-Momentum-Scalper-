@@ -1,5 +1,5 @@
 //@version=6
-indicator("EURUSD Momentum Scalper Indicator v1.1", shorttitle="EURUSD MomScalp", overlay=true, max_labels_count=50)
+indicator("EURUSD Momentum Scalper Indicator v1.1", shorttitle="EUR Mom", overlay=true, max_labels_count=50)
 
 // Signals and alerting only. Pine indicators cannot submit broker orders or enforce account risk.
 int tickWindow = input.int(30, "Rolling sample window", minval=2, maxval=512)

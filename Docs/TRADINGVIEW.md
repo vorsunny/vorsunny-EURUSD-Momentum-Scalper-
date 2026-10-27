@@ -5,7 +5,7 @@
 ## Install
 
 1. Open the EURUSD chart in TradingView.
-2. Open Pine Editor, paste the `.pine` file, and choose **Add to chart**.
+2. Open Pine Editor, select all existing text (Cmd+A on Mac or Ctrl+A on Windows), and replace it with the entire `.pine` file. Do not append it to the starter script: Pine permits only one `indicator()` or `strategy()` declaration. Save and choose **Add to chart**.
 3. Use **Realtime updates** to accumulate live chart updates in a fixed 512-slot circular buffer. The buffer warms up from the time the indicator is added; TradingView does not provide historical tick-by-tick replay to Pine.
 4. Choose **Bar-close proxy** to evaluate one chart close per confirmed bar across history. In that mode, the window is N bars, not N ticks, so signals will differ from the EA and depend on chart timeframe. The tick-rate filter is skipped in this proxy mode because bar samples cannot represent tick activity.
 5. Confirm pip size for the feed. Auto pip sizing supports standard fractional/non-fractional FX quote precision; use the pip size override for nonstandard increments.

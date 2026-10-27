@@ -67,6 +67,16 @@ class ProjectChecks(unittest.TestCase):
         self.assertIn("strategy.exit", strategy)
         self.assertIn("strategy.close_all", strategy)
 
+    def test_pine_declarations_and_short_titles(self):
+        for path in (ROOT / "TradingView").glob("*.pine"):
+            source = path.read_text()
+            with self.subTest(path=path.name):
+                declarations = re.findall(r'^\s*(?:indicator|strategy|library)\s*\(', source, re.M)
+                self.assertEqual(len(declarations), 1)
+                title = re.search(r'shorttitle\s*=\s*"([^"]*)"', source)
+                self.assertIsNotNone(title)
+                self.assertLessEqual(len(title.group(1)), 10)
+
     def test_braces_balance(self):
         paths = list((ROOT / "Experts").glob("*.mq5")) + list((ROOT / "Include").rglob("*.mqh")) + list((ROOT / "Tests").glob("*.mq5")) + list((ROOT / "TradingView").glob("*.pine"))
         for path in paths:

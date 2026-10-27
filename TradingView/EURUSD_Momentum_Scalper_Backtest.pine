@@ -1,5 +1,5 @@
 //@version=6
-strategy("EURUSD Momentum Scalper Bar Proxy v1.1", shorttitle="EURUSD MomScalp BT", overlay=true, initial_capital=10000, currency=currency.EUR, pyramiding=0, default_qty_type=strategy.fixed, default_qty_value=10000, commission_type=strategy.commission.cash_per_order, commission_value=0.0, slippage=0, process_orders_on_close=false, calc_on_every_tick=false, max_labels_count=50)
+strategy("EURUSD Momentum Scalper Bar Proxy v1.1", shorttitle="EUR Mom BT", overlay=true, initial_capital=10000, currency=currency.EUR, pyramiding=0, default_qty_type=strategy.fixed, default_qty_value=10000, commission_type=strategy.commission.cash_per_order, commission_value=0.0, slippage=0, process_orders_on_close=false, calc_on_every_tick=false, max_labels_count=50)
 
 // Historical bar-close proxy for the realtime indicator. It is not tick-accurate.
 int tickWindow = input.int(30, "Rolling window (bars)", minval=2, maxval=512)
