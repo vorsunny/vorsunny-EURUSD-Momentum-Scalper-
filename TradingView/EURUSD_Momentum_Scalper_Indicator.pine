@@ -46,6 +46,11 @@ varip bool sellPulse = false
 varip float latestStop = na
 varip float latestTarget = na
 
+// Alert conditions pulse only on the execution that creates a signal.
+// The separate persistent flags keep markers visible for the rest of the bar.
+bool buyEvent = false
+bool sellEvent = false
+
 if na(seenBar) or bar_index != seenBar
     seenBar := bar_index
     buyPulse := false
@@ -129,8 +134,12 @@ if candidateDirection != 0
     // Consume a threshold episode even if cooldown or daily signal cap blocks its alert.
     latchedDirection := candidateDirection
     if cooldownPassed and dailyLimitPassed
-        buyPulse := candidateDirection == 1
-        sellPulse := candidateDirection == -1
+        buyEvent := candidateDirection == 1
+        sellEvent := candidateDirection == -1
+        if buyEvent
+            buyPulse := true
+        if sellEvent
+            sellPulse := true
         lastSignalTime := sampleTime
         signalsToday += 1
         latestStop := sampledPrice - candidateDirection * stopLossPips * pip
@@ -142,8 +151,8 @@ plot(latestStop, title="Latest indicative stop", color=color.new(color.red, 15),
 plot(latestTarget, title="Latest indicative target", color=color.new(color.green, 15), linewidth=1, style=plot.style_linebr)
 plot(momentumPips, title="Momentum (pips)", color=color.new(color.blue, 100), display=display.data_window)
 
-alertcondition(buyPulse, title="EURUSD Momentum BUY", message="EURUSD Momentum Scalper BUY signal. Confirm spread, execution, and risk manually.")
-alertcondition(sellPulse, title="EURUSD Momentum SELL", message="EURUSD Momentum Scalper SELL signal. Confirm spread, execution, and risk manually.")
+alertcondition(buyEvent, title="EURUSD Momentum BUY", message="EURUSD Momentum Scalper BUY signal. Confirm spread, execution, and risk manually.")
+alertcondition(sellEvent, title="EURUSD Momentum SELL", message="EURUSD Momentum Scalper SELL signal. Confirm spread, execution, and risk manually.")
 
 var table status = table.new(position.top_right, 2, 4, border_width=1)
 if barstate.islast
