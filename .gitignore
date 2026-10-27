@@ -1,0 +1,6 @@
+*.ex5
+*.log
+*.csv
+*.set.bak
+__pycache__/
+.DS_Store
