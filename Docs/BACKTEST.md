@@ -27,3 +27,10 @@ Use Jan–Jun only for development. Freeze parameters before July–September ou
 ## Limitations
 
 Real-tick tests are still simulations. Historical liquidity, queue position, partial fills, latency, rejected requests, variable spreads, commissions, swaps, and demo/live execution can differ. `OrderCalcProfit`, margin, and symbol rules use tester/broker specifications. Strategy Tester cannot establish production execution quality or future returns. No results are included here because no MT5 Strategy Tester was available in the build environment.
+
+
+## TradingView strategy proxy
+
+Use `TradingView/EURUSD_Momentum_Scalper_Backtest.pine` on the EURUSD 1-minute chart in TradingView Strategy Tester. This script samples one close per bar, so a 30-sample window means 30 bars. It is not equivalent to the MT5 real-tick test or the indicator's realtime tick mode. Set tester commission and slippage in Strategy Properties; the script's defaults are zero. The assumed-spread input gates candidate signals only and is not a simulated fill spread. Repeat at wider cost assumptions and compare the report. The time exit is evaluated on bar closes and executes at the next available tick, which can exceed 60 seconds.
+
+No TradingView Strategy Tester session was available from this environment. The Pine strategy is prepared for a chart-side run, but it has not been compiled or tested there and no results are reported.

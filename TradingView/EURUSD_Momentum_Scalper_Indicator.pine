@@ -101,7 +101,7 @@ if acceptedSample and sampleCount >= tickWindow
         if na(stamp) or sampleTime - stamp > 60000
             break
         activeSamples += 1
-    activityAllowed := activeSamples >= minSamplesPerMinute
+    activityAllowed := not useRealtimeTicks or activeSamples >= minSamplesPerMinute
 
 int dayId = year(sampleTime, sessionTimezone) * 10000 + month(sampleTime, sessionTimezone) * 100 + dayofmonth(sampleTime, sessionTimezone)
 if na(activeDay) or dayId != activeDay
@@ -142,7 +142,7 @@ var table status = table.new(position.top_right, 2, 4, border_width=1)
 if barstate.islast
     string modeText = useRealtimeTicks ? "Realtime updates" : "Bar-close proxy"
     string momentumText = na(momentumPips) ? "Warming / unavailable" : str.tostring(momentumPips, "#.###") + " pips"
-    string filterText = not symbolAllowed ? "EURUSD required" : not spreadAllowed ? "Spread assumption blocked" : not sessionAllowed ? "Outside session" : sampleCount < tickWindow ? "Warming buffer" : "Ready"
+    string filterText = not symbolAllowed ? "EURUSD required" : not spreadAllowed ? "Spread assumption blocked" : not sessionAllowed ? "Outside session" : sampleCount < tickWindow ? "Warming buffer" : not volatilityAllowed ? "Volatility blocked" : (useRealtimeTicks and not activityAllowed) ? "Activity below minimum" : "Ready"
     table.cell(status, 0, 0, "EURUSD Momentum", bgcolor=color.new(color.blue, 65), text_color=color.white)
     table.cell(status, 1, 0, modeText, bgcolor=color.new(color.blue, 65), text_color=color.white)
     table.cell(status, 0, 1, "Momentum", text_color=color.white)

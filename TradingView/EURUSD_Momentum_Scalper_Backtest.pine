@@ -1,0 +1,130 @@
+//@version=6
+strategy("EURUSD Momentum Scalper Bar Proxy v1.0", shorttitle="EURUSD MomScalp BT", overlay=true, initial_capital=10000, currency=currency.EUR, pyramiding=0, default_qty_type=strategy.fixed, default_qty_value=10000, commission_type=strategy.commission.cash_per_order, commission_value=0.0, slippage=0, process_orders_on_close=false, calc_on_every_tick=false, max_labels_count=50)
+
+// Historical bar-close proxy for the realtime indicator. It is not tick-accurate.
+int tickWindow = input.int(30, "Rolling window (bars)", minval=2, maxval=512)
+float momentumThresholdPips = input.float(1.5, "Momentum threshold (pips)", minval=0.1, step=0.1)
+float stopLossPips = input.float(5.0, "Stop-loss distance (pips)", minval=0.1, step=0.1)
+float takeProfitPips = input.float(7.5, "Take-profit distance (pips)", minval=0.1, step=0.1)
+int maxHoldSeconds = input.int(60, "Maximum holding time (seconds)", minval=1)
+float riskPercent = input.float(0.10, "Risk per trade (% equity)", minval=0.01, maxval=10.0, step=0.01)
+float maxSpreadPips = input.float(1.0, "Maximum assumed spread (pips); 0 disables", minval=0.0, step=0.1)
+float assumedSpreadPips = input.float(1.0, "Assumed spread (pips)", minval=0.0, step=0.1)
+int cooldownSeconds = input.int(30, "Minimum time between entries (seconds)", minval=0)
+int maxTradesPerDay = input.int(30, "Maximum entries per day", minval=1, maxval=500)
+float maxWindowRangePips = input.float(8.0, "Maximum window range (pips); 0 disables", minval=0.0, step=0.1)
+float maxSingleBarJumpPips = input.float(5.0, "Maximum one-bar jump (pips); 0 disables", minval=0.0, step=0.1)
+float quantityStep = input.float(1000.0, "Quantity step (feed units)", minval=1.0, step=1.0)
+float minimumQuantity = input.float(1000.0, "Minimum quantity (feed units)", minval=1.0, step=1.0)
+float maximumQuantity = input.float(1000000.0, "Maximum quantity (feed units)", minval=1.0, step=1000.0)
+bool sessionFilterEnabled = input.bool(false, "Enable session filter")
+int sessionStartHour = input.int(0, "Session start hour", minval=0, maxval=23)
+int sessionStartMinute = input.int(0, "Session start minute", minval=0, maxval=59)
+int sessionEndHour = input.int(23, "Session end hour", minval=0, maxval=23)
+int sessionEndMinute = input.int(59, "Session end minute", minval=0, maxval=59)
+string sessionTimezone = input.string("Etc/UTC", "Session and daily reset timezone (IANA)")
+float pipSizeOverride = input.float(0.0, "Pip size override (0 = auto)", minval=0.0, step=0.00001)
+bool requireEURUSD = input.bool(true, "Require EURUSD chart")
+
+int CAPACITY = 512
+float autoPip = syminfo.currency == "JPY" ? (syminfo.mintick < 0.01 ? syminfo.mintick * 10.0 : syminfo.mintick) : (syminfo.mintick < 0.0001 ? syminfo.mintick * 10.0 : syminfo.mintick)
+float pip = pipSizeOverride > 0.0 ? pipSizeOverride : autoPip
+bool isEURUSD = syminfo.basecurrency == "EUR" and syminfo.currency == "USD"
+bool symbolAllowed = not requireEURUSD or isEURUSD
+
+var array<float> prices = array.new_float(CAPACITY, na)
+var int nextSlot = 0
+var int sampleCount = 0
+var int latchedDirection = 0
+var int lastEntryTime = na
+var int activeDay = na
+var int entriesToday = 0
+var float lastStop = na
+var float lastTarget = na
+var int lastSignalDirection = 0
+
+int sampleTime = time_close
+int hourNow = hour(sampleTime, sessionTimezone)
+int minuteNow = minute(sampleTime, sessionTimezone)
+int minuteOfDay = hourNow * 60 + minuteNow
+int sessionStart = sessionStartHour * 60 + sessionStartMinute
+int sessionEnd = sessionEndHour * 60 + sessionEndMinute
+bool sessionAllowed = not sessionFilterEnabled or sessionStart == sessionEnd or (sessionStart < sessionEnd ? minuteOfDay >= sessionStart and minuteOfDay < sessionEnd : minuteOfDay >= sessionStart or minuteOfDay < sessionEnd)
+bool spreadAllowed = maxSpreadPips <= 0.0 or assumedSpreadPips <= maxSpreadPips
+bool validPrice = not na(close) and close > 0.0 and pip > 0.0
+bool acceptedBar = barstate.isconfirmed and symbolAllowed and validPrice and spreadAllowed and sessionAllowed
+
+float previousPrice = na
+if sampleCount > 0
+    int previousSlot = (nextSlot - 1 + CAPACITY) % CAPACITY
+    previousPrice := array.get(prices, previousSlot)
+bool jumpAllowed = na(previousPrice) or maxSingleBarJumpPips <= 0.0 or math.abs(close - previousPrice) / pip <= maxSingleBarJumpPips
+if acceptedBar and jumpAllowed
+    array.set(prices, nextSlot, close)
+    nextSlot := (nextSlot + 1) % CAPACITY
+    sampleCount := math.min(sampleCount + 1, CAPACITY)
+
+float momentumPips = na
+float windowRangePips = na
+bool volatilityAllowed = false
+if sampleCount >= tickWindow
+    int oldestSlot = (nextSlot - tickWindow + CAPACITY) % CAPACITY
+    momentumPips := (close - array.get(prices, oldestSlot)) / pip
+    float lowest = close
+    float highest = close
+    for offset = 0 to tickWindow - 1
+        int slot = (nextSlot - 1 - offset + CAPACITY) % CAPACITY
+        float value = array.get(prices, slot)
+        lowest := math.min(lowest, value)
+        highest := math.max(highest, value)
+    windowRangePips := (highest - lowest) / pip
+    volatilityAllowed := maxWindowRangePips <= 0.0 or windowRangePips <= maxWindowRangePips
+
+int dayId = year(sampleTime, sessionTimezone) * 10000 + month(sampleTime, sessionTimezone) * 100 + dayofmonth(sampleTime, sessionTimezone)
+if na(activeDay) or dayId != activeDay
+    activeDay := dayId
+    entriesToday := 0
+
+int candidateDirection = 0
+if acceptedBar and jumpAllowed and not na(momentumPips) and volatilityAllowed
+    if math.abs(momentumPips) < momentumThresholdPips * 0.5
+        latchedDirection := 0
+    candidateDirection := momentumPips >= momentumThresholdPips ? 1 : momentumPips <= -momentumThresholdPips ? -1 : 0
+    if candidateDirection == latchedDirection
+        candidateDirection := 0
+
+bool cooldownPassed = na(lastEntryTime) or sampleTime - lastEntryTime >= cooldownSeconds * 1000
+bool dailyLimitPassed = entriesToday < maxTradesPerDay
+float riskPerUnit = strategy.convert_to_account(stopLossPips * pip * syminfo.pointvalue)
+float riskBudget = strategy.equity * riskPercent / 100.0
+float rawQuantity = not na(riskPerUnit) and riskPerUnit > 0.0 ? riskBudget / riskPerUnit : na
+float roundedQuantity = not na(rawQuantity) ? math.floor(rawQuantity / quantityStep) * quantityStep : na
+float quantity = not na(roundedQuantity) ? math.floor(math.min(roundedQuantity, maximumQuantity) / quantityStep) * quantityStep : na
+bool quantityAllowed = not na(quantity) and quantity >= minimumQuantity
+bool flat = strategy.position_size == 0
+
+if candidateDirection != 0
+    latchedDirection := candidateDirection
+    if cooldownPassed and dailyLimitPassed and flat and quantityAllowed
+        lastSignalDirection := candidateDirection
+        lastEntryTime := sampleTime
+        entriesToday += 1
+        lastStop := close - candidateDirection * stopLossPips * pip
+        lastTarget := close + candidateDirection * takeProfitPips * pip
+        if candidateDirection > 0
+            strategy.entry("Long", strategy.long, qty=quantity, comment="Momentum BUY")
+            strategy.exit("Long bracket", from_entry="Long", stop=lastStop, limit=lastTarget)
+        else
+            strategy.entry("Short", strategy.short, qty=quantity, comment="Momentum SELL")
+            strategy.exit("Short bracket", from_entry="Short", stop=lastStop, limit=lastTarget)
+
+if strategy.opentrades > 0
+    int openedAt = strategy.opentrades.entry_time(0)
+    if time_close - openedAt >= maxHoldSeconds * 1000
+        strategy.close_all(comment="Maximum holding time")
+
+plot(lastStop, title="Latest indicative stop", color=color.new(color.red, 15), linewidth=1, style=plot.style_linebr)
+plot(lastTarget, title="Latest indicative target", color=color.new(color.green, 15), linewidth=1, style=plot.style_linebr)
+plot(momentumPips, title="Momentum (pips)", color=color.new(color.blue, 100), display=display.data_window)
+plotchar(lastSignalDirection == 1 and candidateDirection == 1, title="BUY signal", char="▲", location=location.belowbar, color=color.green, size=size.tiny)
+plotchar(lastSignalDirection == -1 and candidateDirection == -1, title="SELL signal", char="▼", location=location.abovebar, color=color.red, size=size.tiny)

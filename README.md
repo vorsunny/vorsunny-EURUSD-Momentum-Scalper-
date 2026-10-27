@@ -12,6 +12,7 @@ The EA uses a fixed rolling tick window, configurable market filters, independen
 - [Strategy Tester procedure](Docs/BACKTEST.md)
 - [Test plan and validation status](Tests/TEST_PLAN.md)
 - [TradingView indicator](TradingView/EURUSD_Momentum_Scalper_Indicator.pine)
+- [TradingView backtest strategy](TradingView/EURUSD_Momentum_Scalper_Backtest.pine)
 - [TradingView setup and limitations](Docs/TRADINGVIEW.md)
 - [EA source](Experts/EURUSD_Momentum_Scalper.mq5)
 - [Default settings](Config/EURUSD_Default.set)

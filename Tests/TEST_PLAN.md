@@ -40,3 +40,10 @@ Some scenarios require a scripted fixture, a broker demo, or tester support for 
 - Python static checks: run and report in the task summary.
 - MQL unit script: authored but not run; no MetaEditor/MT5 was available.
 - Native compilation, Strategy Tester, broker rejection, partial fills, and hedging/netting execution: unverified.
+
+
+## TradingView strategy proxy status
+
+- Pine v6 indicator and strategy sources pass static repository checks for expected declarations, chart alerts/strategy order calls, absence of strategy orders in the indicator, and balanced braces.
+- The TradingView Pine Editor and Strategy Tester were not available in this environment. Neither Pine script has been compiled or run there; no performance metrics are reported.
+- In TradingView, run the strategy on EURUSD 1-minute bars for Jan–Jun 2026, freeze parameters, then run Jul–Sep 2026 out-of-sample. Confirm symbol point value and quantity units, and set actual commission/slippage in Strategy Properties before interpreting results.

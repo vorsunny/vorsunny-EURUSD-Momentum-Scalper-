@@ -18,6 +18,7 @@ class ProjectChecks(unittest.TestCase):
             "Config/EURUSD_Default.set",
             "Docs/README.md", "Docs/STRATEGY.md", "Docs/RISK.md",
             "Docs/BACKTEST.md", "Docs/TRADINGVIEW.md", "TradingView/EURUSD_Momentum_Scalper_Indicator.pine",
+            "TradingView/EURUSD_Momentum_Scalper_Backtest.pine",
             "Tests/TEST_PLAN.md", "Tests/UnitTests.mq5",
         ]
         for item in expected:
@@ -25,7 +26,8 @@ class ProjectChecks(unittest.TestCase):
                 self.assertTrue((ROOT / item).is_file())
 
     def test_no_placeholder_markers(self):
-        for path in list((ROOT / "Experts").glob("*.mq5")) + list((ROOT / "Include").rglob("*.mqh")):
+        paths = list((ROOT / "Experts").glob("*.mq5")) + list((ROOT / "Include").rglob("*.mqh")) + list((ROOT / "TradingView").glob("*.pine"))
+        for path in paths:
             source = path.read_text()
             self.assertNotRegex(source, r"(?i)TODO|FIXME|not implemented|placeholder")
 
@@ -43,7 +45,6 @@ class ProjectChecks(unittest.TestCase):
         self.assertIn("OrderCalcProfit", risk)
         self.assertIn("MSVolumeForRiskBudget", risk)
         self.assertIn("GlobalVariableSet", risk)
-        self.assertIn("MSVolumeForRiskBudget", risk)
         self.assertIn("MSDailyLossBreached", risk)
         self.assertIn("OrderCheck", execution)
         self.assertIn("TRADE_RETCODE_DONE_PARTIAL", execution)
@@ -59,9 +60,16 @@ class ProjectChecks(unittest.TestCase):
         self.assertIn("varip array<float>", pine)
         self.assertNotIn("strategy(", pine)
         self.assertNotRegex(pine, r"strategy\.(entry|exit|order)\(")
+        strategy = (ROOT / "TradingView/EURUSD_Momentum_Scalper_Backtest.pine").read_text()
+        self.assertTrue(strategy.startswith("//@version=6"))
+        self.assertIn("strategy(", strategy)
+        self.assertIn("initial_capital=10000", strategy)
+        self.assertIn("strategy.exit", strategy)
+        self.assertIn("strategy.close_all", strategy)
 
     def test_braces_balance(self):
-        for path in list((ROOT / "Experts").glob("*.mq5")) + list((ROOT / "Include").rglob("*.mqh")) + list((ROOT / "Tests").glob("*.mq5")):
+        paths = list((ROOT / "Experts").glob("*.mq5")) + list((ROOT / "Include").rglob("*.mqh")) + list((ROOT / "Tests").glob("*.mq5")) + list((ROOT / "TradingView").glob("*.pine"))
+        for path in paths:
             source = path.read_text()
             source = re.sub(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"', "", source, flags=re.S)
             self.assertEqual(source.count("{"), source.count("}"), str(path))
