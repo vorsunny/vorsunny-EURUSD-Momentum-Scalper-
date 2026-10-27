@@ -78,6 +78,11 @@ if eligibleSample
         nextSlot := (nextSlot + 1) % CAPACITY
         sampleCount := math.min(sampleCount + 1, CAPACITY)
         acceptedSample := true
+    else
+        // Discard the jump and warm a fresh window on subsequent updates.
+        nextSlot := 0
+        sampleCount := 0
+        latchedDirection := 0
 
 float momentumPips = na
 float windowRangePips = na

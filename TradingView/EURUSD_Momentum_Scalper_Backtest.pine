@@ -47,7 +47,6 @@ var float dayStartEquity = na
 var bool dailyLossLocked = false
 var float lastStop = na
 var float lastTarget = na
-var int lastSignalDirection = 0
 
 int sampleTime = time_close
 int hourNow = hour(sampleTime, sessionTimezone)
@@ -69,6 +68,11 @@ if acceptedBar and jumpAllowed
     array.set(prices, nextSlot, close)
     nextSlot := (nextSlot + 1) % CAPACITY
     sampleCount := math.min(sampleCount + 1, CAPACITY)
+else if acceptedBar and not jumpAllowed
+    // Reject the jump and rebuild from subsequent bars, avoiding a permanent lockout.
+    nextSlot := 0
+    sampleCount := 0
+    latchedDirection := 0
 
 float momentumPips = na
 float windowRangePips = na
@@ -109,28 +113,33 @@ if acceptedBar and jumpAllowed and not na(momentumPips) and volatilityAllowed
 
 bool cooldownPassed = na(lastEntryTime) or sampleTime - lastEntryTime >= cooldownSeconds * 1000
 bool dailyLimitPassed = entriesToday < maxTradesPerDay
-float riskPerUnit = strategy.convert_to_account(stopLossPips * pip * syminfo.pointvalue)
+int stopTicks = int(math.max(1, math.floor(stopLossPips * pip / syminfo.mintick)))
+int targetTicks = int(math.max(1, math.round(takeProfitPips * pip / syminfo.mintick)))
+float riskPerUnit = strategy.convert_to_account(stopTicks * syminfo.mintick * syminfo.pointvalue)
 float riskBudget = strategy.equity * riskPercent / 100.0
 float rawQuantity = not na(riskPerUnit) and riskPerUnit > 0.0 ? riskBudget / riskPerUnit : na
 float roundedQuantity = not na(rawQuantity) ? math.floor(rawQuantity / quantityStep) * quantityStep : na
 float quantity = not na(roundedQuantity) ? math.floor(math.min(roundedQuantity, maximumQuantity) / quantityStep) * quantityStep : na
 bool quantityAllowed = not na(quantity) and quantity >= minimumQuantity
 bool flat = strategy.position_size == 0
+bool enteredLong = false
+bool enteredShort = false
 
 if candidateDirection != 0
     latchedDirection := candidateDirection
     if cooldownPassed and dailyLimitPassed and not dailyLossLocked and flat and quantityAllowed
-        lastSignalDirection := candidateDirection
+        enteredLong := candidateDirection > 0
+        enteredShort := candidateDirection < 0
         lastEntryTime := sampleTime
         entriesToday += 1
-        lastStop := close - candidateDirection * stopLossPips * pip
-        lastTarget := close + candidateDirection * takeProfitPips * pip
+        lastStop := close - candidateDirection * stopTicks * syminfo.mintick
+        lastTarget := close + candidateDirection * targetTicks * syminfo.mintick
         if candidateDirection > 0
             strategy.entry("Long", strategy.long, qty=quantity, comment="Momentum BUY")
-            strategy.exit("Long bracket", from_entry="Long", stop=lastStop, limit=lastTarget)
+            strategy.exit("Long bracket", from_entry="Long", loss=stopTicks, profit=targetTicks)
         else
             strategy.entry("Short", strategy.short, qty=quantity, comment="Momentum SELL")
-            strategy.exit("Short bracket", from_entry="Short", stop=lastStop, limit=lastTarget)
+            strategy.exit("Short bracket", from_entry="Short", loss=stopTicks, profit=targetTicks)
 
 // The daily-loss close takes priority so the same bar cannot submit two close requests.
 if strategy.opentrades > 0 and not (dailyLossLocked and closeOnDailyLoss)
@@ -141,8 +150,8 @@ if strategy.opentrades > 0 and not (dailyLossLocked and closeOnDailyLoss)
 plot(lastStop, title="Latest indicative stop", color=color.new(color.red, 15), linewidth=1, style=plot.style_linebr)
 plot(lastTarget, title="Latest indicative target", color=color.new(color.green, 15), linewidth=1, style=plot.style_linebr)
 plot(momentumPips, title="Momentum (pips)", color=color.new(color.blue, 100), display=display.data_window)
-plotchar(lastSignalDirection == 1 and candidateDirection == 1, title="BUY signal", char="▲", location=location.belowbar, color=color.green, size=size.tiny)
-plotchar(lastSignalDirection == -1 and candidateDirection == -1, title="SELL signal", char="▼", location=location.abovebar, color=color.red, size=size.tiny)
+plotchar(enteredLong, title="BUY order submitted", char="▲", location=location.belowbar, color=color.green, size=size.tiny)
+plotchar(enteredShort, title="SELL order submitted", char="▼", location=location.abovebar, color=color.red, size=size.tiny)
 
 var table status = table.new(position.top_right, 2, 5, border_width=1)
 if barstate.islast

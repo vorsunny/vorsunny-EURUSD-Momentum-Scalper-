@@ -1,5 +1,11 @@
 # Changelog
 
+## TradingView improvements
+
+- Recover from large price jumps by clearing and rebuilding the sample window.
+- Anchor simulated brackets to entry fills, size against the tick-rounded stop, and show markers only for submitted entries.
+- Clarify the daily equity baseline and execution assumptions.
+
 ## TradingView 1.1 — 2026-10-27
 
 - Corrected auto pip sizing for FX feeds with fractional quote precision.
