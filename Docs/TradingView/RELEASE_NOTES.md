@@ -15,3 +15,10 @@ Replace the complete script in Pine Editor; do not append it to an existing decl
 ## Known limits
 
 Realtime tick history and chart markers cannot be restored after a Pine restart. TradingView retains alert logs according to its platform/plan limits; export for durable records. Assumed spread does not model fills; configure actual commission/slippage. Native and live gates are pending in the included validation JSON, so this artifact must remain a prerelease. No forecast of profitability is made.
+
+## Download
+
+The candidate bundle and SHA256 are versioned in the repository because this publishing environment cannot authenticate to GitHub release-attachment uploads. The release source archive also contains the standalone sources and guides.
+
+- [Download candidate bundle](https://github.com/vorsunny/vorsunny-EURUSD-Momentum-Scalper-/raw/refs/tags/tradingview-v3.0.0-rc.1/Releases/TradingView/3.0.0-rc.1/tradingview-momentum-scalper-3.0.0-rc.1.zip)
+- [Bundle SHA256](https://github.com/vorsunny/vorsunny-EURUSD-Momentum-Scalper-/raw/refs/tags/tradingview-v3.0.0-rc.1/Releases/TradingView/3.0.0-rc.1/tradingview-momentum-scalper-3.0.0-rc.1.sha256)

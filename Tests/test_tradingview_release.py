@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from Tools.build_tradingview import sync, TARGETS, BEGIN, END
 from Tools.check_alert_log import check_log
-from Tools.package_tradingview import package, stable_ready, REQUIRED_GATES
+from Tools.package_tradingview import package, stable_ready, REQUIRED_GATES, VERSION
 
 STAMP = 1767225600000
 
@@ -112,6 +112,11 @@ class ReleaseTests(unittest.TestCase):
         bad = copy.deepcopy(results)
         bad['gates']['live_alert_reconciliation']['unexplained_mismatches'] = 1
         self.assertFalse(stable_ready(bad))
+
+    def test_repository_candidate_matches_current_sources(self):
+        official = ROOT / f'Releases/TradingView/{VERSION}/tradingview-momentum-scalper-{VERSION}.zip'
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(official.read_bytes(), package(Path(directory)).read_bytes())
 
     def test_bundle_is_reproducible(self):
         with tempfile.TemporaryDirectory() as directory:

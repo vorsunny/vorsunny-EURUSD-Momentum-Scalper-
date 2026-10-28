@@ -6,7 +6,7 @@
     "date": "2026-10-28",
     "scope": "Python tooling, source contracts and sync only; does not execute Pine",
     "repository_sanity_tests": 8,
-    "tooling_and_release_tests": 15,
+    "tooling_and_release_tests": 16,
     "commands": [
       "python3 Tools/build_tradingview.py --check",
       "python3 Tests/static_checks.py",
