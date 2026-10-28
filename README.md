@@ -1,5 +1,7 @@
 # EURUSD Momentum Scalper
 
+**TradingView v3.0.0-rc.1: native validation pending.** [Start here](Docs/TradingView/QUICK_START.md) for realtime chart signals, alerts, and the separate bar-proxy backtest. [Validation status](Docs/TradingView/validation_results.json) lists the required native/live checks.
+
 Native MQL5 tick-momentum Expert Advisor for controlled MetaTrader 5 demo validation. Version 1.0.
 
 The MT5 EA and cTrader port use a fixed rolling tick window, configurable market filters, risk-based volume sizing, a daily loss circuit breaker, and timed exits. Demo-account-only protection is enabled by default in the automated bots. No profitability claim is made; compile, test, and validate against your broker before any use.

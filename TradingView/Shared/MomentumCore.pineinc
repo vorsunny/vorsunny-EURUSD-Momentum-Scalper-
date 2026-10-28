@@ -1,0 +1,86 @@
+// Shared Pine v6 helpers. Synced into standalone scripts by Tools/build_tradingview.py.
+ms_pip(bool eurusd, string instrumentType, string quoteCurrency, float tick, float overridePip) =>
+    overridePip > 0 ? overridePip : eurusd ? 0.0001 : instrumentType == "forex" ? (quoteCurrency == "JPY" ? 0.01 : 0.0001) : tick
+
+ms_session(int stamp, string zone, bool enabled, int startMinute, int endMinute) =>
+    int minuteOfDay = hour(stamp, zone) * 60 + minute(stamp, zone)
+    not enabled or startMinute == endMinute or (startMinute < endMinute ? minuteOfDay >= startMinute and minuteOfDay < endMinute : minuteOfDay >= startMinute or minuteOfDay < endMinute)
+
+// Caller passes only valid eligible samples. Gap resets seed with this sample;
+// a price jump is discarded and the next sample starts the new window.
+ms_window(array<float> prices, array<int> stamps, int next, int count, float price, int stamp, int window, float pip, float gapLimitMs, float jumpLimitPips) =>
+    int capacity = array.size(prices)
+    int n = next
+    int c = count
+    int reset = 0
+    if c > 0
+        int newest = (n - 1 + capacity) % capacity
+        int gap = stamp - array.get(stamps, newest)
+        if gap < 0 or gap > gapLimitMs
+            n := 0
+            c := 0
+            reset := 1
+    bool jump = c > 0 and jumpLimitPips > 0 and math.abs(price - array.get(prices, (n - 1 + capacity) % capacity)) / pip > jumpLimitPips
+    if jump
+        n := 0
+        c := 0
+        reset := 2
+    else
+        array.set(prices, n, price)
+        array.set(stamps, n, stamp)
+        n := (n + 1) % capacity
+        c := math.min(c + 1, capacity)
+    float momentum = na
+    float priceRange = na
+    int active = 0
+    if not jump
+        for offset = 0 to c - 1
+            if stamp - array.get(stamps, (n - 1 - offset + capacity) % capacity) > 60000
+                break
+            active += 1
+        if c >= window
+            // Remove floating subtraction noise at exact pip thresholds.
+            momentum := math.round((price - array.get(prices, (n - window + capacity) % capacity)) / pip, 9)
+            float low = price
+            float high = price
+            for offset = 0 to window - 1
+                float value = array.get(prices, (n - 1 - offset + capacity) % capacity)
+                low := math.min(low, value)
+                high := math.max(high, value)
+            priceRange := math.round((high - low) / pip, 9)
+    [n, c, momentum, priceRange, active, reset]
+
+// Consumes a threshold episode even when the caller's execution gates block it.
+ms_episode(float momentum, float threshold, int latch, bool eligible) =>
+    int nextLatch = latch
+    int candidate = 0
+    if eligible and not na(momentum)
+        if math.abs(momentum) < threshold * 0.5
+            nextLatch := 0
+        int direction = momentum >= threshold ? 1 : momentum <= -threshold ? -1 : 0
+        if direction != 0 and direction != nextLatch
+            candidate := direction
+            nextLatch := direction
+    [nextLatch, candidate]
+
+ms_cooldown(int stamp, int lastEvent, int seconds) =>
+    na(lastEvent) ? 0 : int(math.max(0, math.ceil((lastEvent + seconds * 1000.0 - stamp) / 1000.0)))
+
+ms_can_signal(int candidate, int stamp, int lastEvent, int seconds, int eventsToday, int cap) =>
+    candidate != 0 and ms_cooldown(stamp, lastEvent, seconds) == 0 and eventsToday < cap
+
+ms_ticks(float distancePips, float pip, float tick) =>
+    int(math.max(1, math.round(distancePips * pip / tick)))
+
+ms_quantity(float budget, float riskPerUnit, float step, float minimum, float maximum) =>
+    float quantity = na
+    if budget > 0 and riskPerUnit > 0 and step > 0 and maximum >= minimum
+        quantity := math.floor(math.min(budget / riskPerUnit, maximum) / step) * step
+    bool allowed = not na(quantity) and quantity >= minimum and quantity > 0
+    [quantity, allowed]
+
+ms_daily(bool newDay, float previousEquity, float equity, float initialCapital, float oldBaseline, bool oldLock, float limitPercent) =>
+    float baseline = newDay ? nz(previousEquity, initialCapital) : oldBaseline
+    float pnl = baseline > 0 ? (equity - baseline) / baseline * 100.0 : na
+    bool locked = (newDay ? false : oldLock) or (limitPercent > 0 and not na(pnl) and pnl <= -limitPercent)
+    [baseline, pnl, locked]

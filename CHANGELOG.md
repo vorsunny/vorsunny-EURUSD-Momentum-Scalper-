@@ -1,5 +1,14 @@
 # Changelog
 
+## TradingView 3.0.0-rc.1 — 2026-10-28
+
+- Expanded realtime diagnostics and immediate post-event cooldown/cap display.
+- Added per-runtime traceable MS3 alerts and labeled indicative levels.
+- Synced standalone scripts to shared Pine helpers, including a native self-test harness.
+- Added proxy date filtering, cost/hold-resolution warnings and risk sizing diagnostics.
+- Added log-validation tooling, CI, candidate packaging, acceptance gates and evidence worksheets.
+- Native compilation, live tests and performance runs remain pending; this is a prerelease.
+
 ## cTrader port — 2026-10-28
 
 - Added a C# cBot and chart indicator based on the rolling-tick momentum strategy.

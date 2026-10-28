@@ -1,8 +1,6 @@
 //@version=6
-strategy("EURUSD Momentum Scalper TV Companion v2.2", shorttitle="EUR Mom BT", overlay=true, initial_capital=10000, currency=currency.EUR, pyramiding=0, default_qty_type=strategy.fixed, default_qty_value=10000, commission_type=strategy.commission.cash_per_order, commission_value=0.0, slippage=0, process_orders_on_close=false, calc_on_every_tick=false, max_labels_count=50)
-
-// TradingView companion to the cTrader cBot. Historical samples are bar closes,
-// so this Strategy Tester script is a bar proxy, not a tick-equivalent test.
+strategy("EURUSD Momentum Scalper Bar Proxy v3.0 RC1", shorttitle="EUR Mom BT", overlay=true, initial_capital=10000, currency=currency.EUR, pyramiding=0, default_qty_type=strategy.fixed, default_qty_value=10000, commission_type=strategy.commission.cash_per_order, commission_value=0.0, slippage=0, process_orders_on_close=false, calc_on_every_tick=false, max_labels_count=50)
+// Release candidate: historical bar closes are not live ticks.
 int tickWindow = input.int(30, "Rolling window (bars)", minval=2, maxval=512)
 float momentumThresholdPips = input.float(1.5, "Momentum threshold (pips)", minval=0.1, step=0.1)
 float stopLossPips = input.float(5.0, "Stop-loss distance (pips)", minval=0.1, step=0.1)
@@ -29,151 +27,206 @@ string sessionTimezone = input.string("Etc/UTC", "Session and daily reset timezo
 float pipSizeOverride = input.float(0.0, "Pip size override (0 = auto)", minval=0.0, step=0.00001)
 bool requireEURUSD = input.bool(true, "Require EURUSD chart")
 
+bool useDateFilter = input.bool(false, "Restrict entry dates (UTC)")
+int testStart = input.time(timestamp("01 Jan 2026 00:00 +0000"), "Entry start (inclusive)")
+int testEnd = input.time(timestamp("01 Jul 2026 00:00 +0000"), "Entry end (exclusive)")
+
+// BEGIN SHARED MOMENTUM CORE
+// Shared Pine v6 helpers. Synced into standalone scripts by Tools/build_tradingview.py.
+ms_pip(bool eurusd, string instrumentType, string quoteCurrency, float tick, float overridePip) =>
+    overridePip > 0 ? overridePip : eurusd ? 0.0001 : instrumentType == "forex" ? (quoteCurrency == "JPY" ? 0.01 : 0.0001) : tick
+
+ms_session(int stamp, string zone, bool enabled, int startMinute, int endMinute) =>
+    int minuteOfDay = hour(stamp, zone) * 60 + minute(stamp, zone)
+    not enabled or startMinute == endMinute or (startMinute < endMinute ? minuteOfDay >= startMinute and minuteOfDay < endMinute : minuteOfDay >= startMinute or minuteOfDay < endMinute)
+
+// Caller passes only valid eligible samples. Gap resets seed with this sample;
+// a price jump is discarded and the next sample starts the new window.
+ms_window(array<float> prices, array<int> stamps, int next, int count, float price, int stamp, int window, float pip, float gapLimitMs, float jumpLimitPips) =>
+    int capacity = array.size(prices)
+    int n = next
+    int c = count
+    int reset = 0
+    if c > 0
+        int newest = (n - 1 + capacity) % capacity
+        int gap = stamp - array.get(stamps, newest)
+        if gap < 0 or gap > gapLimitMs
+            n := 0
+            c := 0
+            reset := 1
+    bool jump = c > 0 and jumpLimitPips > 0 and math.abs(price - array.get(prices, (n - 1 + capacity) % capacity)) / pip > jumpLimitPips
+    if jump
+        n := 0
+        c := 0
+        reset := 2
+    else
+        array.set(prices, n, price)
+        array.set(stamps, n, stamp)
+        n := (n + 1) % capacity
+        c := math.min(c + 1, capacity)
+    float momentum = na
+    float priceRange = na
+    int active = 0
+    if not jump
+        for offset = 0 to c - 1
+            if stamp - array.get(stamps, (n - 1 - offset + capacity) % capacity) > 60000
+                break
+            active += 1
+        if c >= window
+            // Remove floating subtraction noise at exact pip thresholds.
+            momentum := math.round((price - array.get(prices, (n - window + capacity) % capacity)) / pip, 9)
+            float low = price
+            float high = price
+            for offset = 0 to window - 1
+                float value = array.get(prices, (n - 1 - offset + capacity) % capacity)
+                low := math.min(low, value)
+                high := math.max(high, value)
+            priceRange := math.round((high - low) / pip, 9)
+    [n, c, momentum, priceRange, active, reset]
+
+// Consumes a threshold episode even when the caller's execution gates block it.
+ms_episode(float momentum, float threshold, int latch, bool eligible) =>
+    int nextLatch = latch
+    int candidate = 0
+    if eligible and not na(momentum)
+        if math.abs(momentum) < threshold * 0.5
+            nextLatch := 0
+        int direction = momentum >= threshold ? 1 : momentum <= -threshold ? -1 : 0
+        if direction != 0 and direction != nextLatch
+            candidate := direction
+            nextLatch := direction
+    [nextLatch, candidate]
+
+ms_cooldown(int stamp, int lastEvent, int seconds) =>
+    na(lastEvent) ? 0 : int(math.max(0, math.ceil((lastEvent + seconds * 1000.0 - stamp) / 1000.0)))
+
+ms_can_signal(int candidate, int stamp, int lastEvent, int seconds, int eventsToday, int cap) =>
+    candidate != 0 and ms_cooldown(stamp, lastEvent, seconds) == 0 and eventsToday < cap
+
+ms_ticks(float distancePips, float pip, float tick) =>
+    int(math.max(1, math.round(distancePips * pip / tick)))
+
+ms_quantity(float budget, float riskPerUnit, float step, float minimum, float maximum) =>
+    float quantity = na
+    if budget > 0 and riskPerUnit > 0 and step > 0 and maximum >= minimum
+        quantity := math.floor(math.min(budget / riskPerUnit, maximum) / step) * step
+    bool allowed = not na(quantity) and quantity >= minimum and quantity > 0
+    [quantity, allowed]
+
+ms_daily(bool newDay, float previousEquity, float equity, float initialCapital, float oldBaseline, bool oldLock, float limitPercent) =>
+    float baseline = newDay ? nz(previousEquity, initialCapital) : oldBaseline
+    float pnl = baseline > 0 ? (equity - baseline) / baseline * 100.0 : na
+    bool locked = (newDay ? false : oldLock) or (limitPercent > 0 and not na(pnl) and pnl <= -limitPercent)
+    [baseline, pnl, locked]
+// END SHARED MOMENTUM CORE
+
+if barstate.isfirst and minimumQuantity > maximumQuantity
+    runtime.error("Minimum quantity must not exceed maximum quantity.")
+if barstate.isfirst and useDateFilter and testStart >= testEnd
+    runtime.error("Entry start must precede entry end.")
 int CAPACITY = 512
-// FX pip size is a quote-currency convention, not a function of feed precision.
-// This handles fractional and non-fractional EURUSD quotes consistently.
-bool isEURUSD = syminfo.basecurrency == "EUR" and syminfo.currency == "USD"
-float autoPip = isEURUSD ? 0.0001 : syminfo.type == "forex" ? (syminfo.currency == "JPY" ? 0.01 : 0.0001) : syminfo.mintick
-float pip = pipSizeOverride > 0.0 ? pipSizeOverride : autoPip
-bool symbolAllowed = not requireEURUSD or isEURUSD
+bool eurusd = syminfo.basecurrency == "EUR" and syminfo.currency == "USD"
+float pip = ms_pip(eurusd, syminfo.type, syminfo.currency, syminfo.mintick, pipSizeOverride)
+bool symbolAllowed = not requireEURUSD or eurusd
+bool chartAllowed = chart.is_standard and not str.endswith(timeframe.period, "T")
+float chartSeconds = chartAllowed ? timeframe.in_seconds() : na
+int sampleTime = time_close
+bool validPrice = not na(sampleTime) and not na(close) and close > 0 and pip > 0
+bool sessionAllowed = ms_session(sampleTime, sessionTimezone, sessionFilterEnabled, sessionStartHour * 60 + sessionStartMinute, sessionEndHour * 60 + sessionEndMinute)
+bool spreadAllowed = maxSpreadPips <= 0 or assumedSpreadPips <= maxSpreadPips
+bool acceptedBar = barstate.isconfirmed and chartAllowed and symbolAllowed and validPrice and spreadAllowed and sessionAllowed
+bool dateAllowed = not useDateFilter or (sampleTime >= testStart and sampleTime < testEnd)
 
 var array<float> prices = array.new_float(CAPACITY, na)
+var array<int> sampleTimes = array.new_int(CAPACITY, na)
 var int nextSlot = 0
 var int sampleCount = 0
-var int lastSampleTime = na
 var int latchedDirection = 0
 var int lastEntryTime = na
 var int activeDay = na
 var int entriesToday = 0
 var float dayStartEquity = na
 var bool dailyLossLocked = false
-
-int sampleTime = time_close
-int hourNow = hour(sampleTime, sessionTimezone)
-int minuteNow = minute(sampleTime, sessionTimezone)
-int minuteOfDay = hourNow * 60 + minuteNow
-int sessionStart = sessionStartHour * 60 + sessionStartMinute
-int sessionEnd = sessionEndHour * 60 + sessionEndMinute
-bool sessionAllowed = not sessionFilterEnabled or sessionStart == sessionEnd or (sessionStart < sessionEnd ? minuteOfDay >= sessionStart and minuteOfDay < sessionEnd : minuteOfDay >= sessionStart or minuteOfDay < sessionEnd)
-bool spreadAllowed = maxSpreadPips <= 0.0 or assumedSpreadPips <= maxSpreadPips
-bool validPrice = not na(sampleTime) and not na(close) and close > 0.0 and pip > 0.0
-bool acceptedBar = barstate.isconfirmed and chart.is_standard and symbolAllowed and validPrice and spreadAllowed and sessionAllowed
-
-// Clear samples after missing bars/session gaps; never compare disconnected windows.
-if acceptedBar and not na(lastSampleTime) and (sampleTime < lastSampleTime or sampleTime - lastSampleTime > timeframe.in_seconds() * 3000.0)
-    nextSlot := 0
-    sampleCount := 0
-    latchedDirection := 0
-
-float previousPrice = na
-if sampleCount > 0
-    int previousSlot = (nextSlot - 1 + CAPACITY) % CAPACITY
-    previousPrice := array.get(prices, previousSlot)
-bool jumpAllowed = na(previousPrice) or maxSingleBarJumpPips <= 0.0 or math.abs(close - previousPrice) / pip <= maxSingleBarJumpPips
-if acceptedBar and jumpAllowed
-    lastSampleTime := sampleTime
-    array.set(prices, nextSlot, close)
-    nextSlot := (nextSlot + 1) % CAPACITY
-    sampleCount := math.min(sampleCount + 1, CAPACITY)
-else if acceptedBar and not jumpAllowed
-    // Reject the jump and rebuild from subsequent bars, avoiding a permanent lockout.
-    nextSlot := 0
-    sampleCount := 0
-    latchedDirection := 0
-
 float momentumPips = na
 float windowRangePips = na
-bool volatilityAllowed = false
-if acceptedBar and jumpAllowed and sampleCount >= tickWindow
-    int oldestSlot = (nextSlot - tickWindow + CAPACITY) % CAPACITY
-    momentumPips := (close - array.get(prices, oldestSlot)) / pip
-    float lowest = close
-    float highest = close
-    for offset = 0 to tickWindow - 1
-        int slot = (nextSlot - 1 - offset + CAPACITY) % CAPACITY
-        float value = array.get(prices, slot)
-        lowest := math.min(lowest, value)
-        highest := math.max(highest, value)
-    windowRangePips := (highest - lowest) / pip
-    volatilityAllowed := maxWindowRangePips <= 0.0 or windowRangePips <= maxWindowRangePips
+int resetReason = 0
+if acceptedBar
+    [next, count, momentum, priceRange, active, reset] = ms_window(prices, sampleTimes, nextSlot, sampleCount, close, sampleTime, tickWindow, pip, chartSeconds * 3000.0, maxSingleBarJumpPips)
+    nextSlot := next
+    sampleCount := count
+    momentumPips := momentum
+    windowRangePips := priceRange
+    resetReason := reset
+    if reset != 0
+        latchedDirection := 0
 
 int dayId = year(sampleTime, sessionTimezone) * 10000 + month(sampleTime, sessionTimezone) * 100 + dayofmonth(sampleTime, sessionTimezone)
-if na(activeDay) or dayId != activeDay
+bool newDay = not na(sampleTime) and (na(activeDay) or dayId != activeDay)
+if newDay
     activeDay := dayId
     entriesToday := 0
-    // Previous close includes the first evaluated bar's change in this day's P&L.
-    dayStartEquity := nz(strategy.equity[1], strategy.initial_capital)
-    dailyLossLocked := false
+[baseline, dailyPnlPercent, locked] = ms_daily(newDay, strategy.equity[1], strategy.equity, strategy.initial_capital, dayStartEquity, dailyLossLocked, maxDailyLossPercent)
+dayStartEquity := baseline
+dailyLossLocked := locked
 
-float dailyPnlPercent = not na(dayStartEquity) and dayStartEquity > 0.0 ? (strategy.equity - dayStartEquity) / dayStartEquity * 100.0 : na
-if maxDailyLossPercent > 0.0 and not na(dailyPnlPercent) and dailyPnlPercent <= -maxDailyLossPercent
-    dailyLossLocked := true
-if dailyLossLocked and closeOnDailyLoss and strategy.position_size != 0
-    strategy.close_all(comment="Daily equity loss limit")
-
-int candidateDirection = 0
-if acceptedBar and jumpAllowed and not na(momentumPips) and volatilityAllowed
-    if math.abs(momentumPips) < momentumThresholdPips * 0.5
-        latchedDirection := 0
-    candidateDirection := momentumPips >= momentumThresholdPips ? 1 : momentumPips <= -momentumThresholdPips ? -1 : 0
-    if candidateDirection == latchedDirection
-        candidateDirection := 0
-
-bool cooldownPassed = na(lastEntryTime) or sampleTime - lastEntryTime >= cooldownSeconds * 1000
-bool dailyLimitPassed = entriesToday < maxTradesPerDay
-int stopTicks = int(math.max(1, math.round(stopLossPips * pip / syminfo.mintick)))
-int targetTicks = int(math.max(1, math.round(takeProfitPips * pip / syminfo.mintick)))
+bool volatilityAllowed = not na(windowRangePips) and (maxWindowRangePips <= 0 or windowRangePips <= maxWindowRangePips)
+[latch, candidate] = ms_episode(momentumPips, momentumThresholdPips, latchedDirection, acceptedBar and volatilityAllowed)
+latchedDirection := latch
+int stopTicks = ms_ticks(stopLossPips, pip, syminfo.mintick)
+int targetTicks = ms_ticks(takeProfitPips, pip, syminfo.mintick)
 float riskPerUnit = strategy.convert_to_account(stopTicks * syminfo.mintick * syminfo.pointvalue)
 float riskBudget = strategy.equity * riskPercent / 100.0
-float rawQuantity = not na(riskPerUnit) and riskPerUnit > 0.0 ? riskBudget / riskPerUnit : na
-float roundedQuantity = not na(rawQuantity) ? math.floor(rawQuantity / quantityStep) * quantityStep : na
-float quantity = not na(roundedQuantity) ? math.floor(math.min(roundedQuantity, maximumQuantity) / quantityStep) * quantityStep : na
-bool quantityAllowed = not na(quantity) and quantity >= minimumQuantity
-bool flat = strategy.position_size == 0
+[quantity, quantityAllowed] = ms_quantity(riskBudget, riskPerUnit, quantityStep, minimumQuantity, maximumQuantity)
 bool enteredLong = false
 bool enteredShort = false
+if ms_can_signal(candidate, sampleTime, lastEntryTime, cooldownSeconds, entriesToday, maxTradesPerDay) and dateAllowed and not dailyLossLocked and strategy.position_size == 0 and quantityAllowed
+    enteredLong := candidate > 0
+    enteredShort := candidate < 0
+    lastEntryTime := sampleTime
+    entriesToday += 1
+    if enteredLong
+        strategy.entry("Long", strategy.long, qty=quantity, comment="Momentum BUY")
+        strategy.exit("Long bracket", from_entry="Long", loss=stopTicks, profit=targetTicks)
+    else
+        strategy.entry("Short", strategy.short, qty=quantity, comment="Momentum SELL")
+        strategy.exit("Short bracket", from_entry="Short", loss=stopTicks, profit=targetTicks)
 
-if candidateDirection != 0
-    latchedDirection := candidateDirection
-    if cooldownPassed and dailyLimitPassed and not dailyLossLocked and flat and quantityAllowed
-        enteredLong := candidateDirection > 0
-        enteredShort := candidateDirection < 0
-        lastEntryTime := sampleTime
-        entriesToday += 1
-        if candidateDirection > 0
-            strategy.entry("Long", strategy.long, qty=quantity, comment="Momentum BUY")
-            strategy.exit("Long bracket", from_entry="Long", loss=stopTicks, profit=targetTicks)
-        else
-            strategy.entry("Short", strategy.short, qty=quantity, comment="Momentum SELL")
-            strategy.exit("Short bracket", from_entry="Short", loss=stopTicks, profit=targetTicks)
-
-// The daily-loss close takes priority so the same bar cannot submit two close requests.
-if strategy.opentrades > 0 and not (dailyLossLocked and closeOnDailyLoss)
-    int openedAt = strategy.opentrades.entry_time(0)
-    if time_close - openedAt >= maxHoldSeconds * 1000
+// Exit management is independent of signal readiness, session and spread gates.
+if strategy.position_size != 0
+    if dailyLossLocked and closeOnDailyLoss
+        strategy.close_all(comment="Daily equity loss limit")
+    else if useDateFilter and sampleTime >= testEnd
+        strategy.close_all(comment="Entry window ended")
+    else if strategy.opentrades > 0 and sampleTime - strategy.opentrades.entry_time(0) >= maxHoldSeconds * 1000
         strategy.close_all(comment="Maximum holding time")
 
 float positionDirection = math.sign(strategy.position_size)
 float activeStop = positionDirection != 0 ? strategy.position_avg_price - positionDirection * stopTicks * syminfo.mintick : na
 float activeTarget = positionDirection != 0 ? strategy.position_avg_price + positionDirection * targetTicks * syminfo.mintick : na
-plot(activeStop, title="Simulated position stop", color=color.new(color.red, 15), linewidth=1, style=plot.style_linebr)
-plot(activeTarget, title="Simulated position target", color=color.new(color.green, 15), linewidth=1, style=plot.style_linebr)
-plot(momentumPips, title="Momentum (pips)", color=color.new(color.blue, 100), display=display.data_window)
+plot(activeStop, title="Simulated position stop", color=color.red, style=plot.style_linebr)
+plot(activeTarget, title="Simulated position target", color=color.green, style=plot.style_linebr)
+plot(momentumPips, title="Momentum (pips)", display=display.data_window)
 plotchar(enteredLong, title="BUY order submitted", char="▲", location=location.belowbar, color=color.green, size=size.tiny)
 plotchar(enteredShort, title="SELL order submitted", char="▼", location=location.abovebar, color=color.red, size=size.tiny)
-
-var table status = table.new(position.top_right, 2, 5, border_width=1)
+int cooldownRemaining = ms_cooldown(sampleTime, lastEntryTime, cooldownSeconds)
+string state = not chartAllowed ? "Use standard time-based candles" : not symbolAllowed ? "EURUSD required" : not validPrice ? "Invalid quote/time" : dailyLossLocked ? "Daily loss locked" : not dateAllowed ? "Outside entry dates" : entriesToday >= maxTradesPerDay ? "Daily entry limit" : strategy.position_size != 0 ? "Position open" : not spreadAllowed ? "Spread assumption blocked" : not sessionAllowed ? "Outside session" : resetReason == 2 ? "Price jump: window reset" : sampleCount < tickWindow ? "Warming buffer" : cooldownRemaining > 0 ? "Entry cooldown" : not volatilityAllowed ? "Volatility blocked" : not quantityAllowed ? "Risk size invalid/below minimum" : "Ready"
+var table status = table.new(position.top_right, 2, 9, border_width=1)
 if barstate.islast
-    string signalState = not chart.is_standard ? "Use standard candles" : not symbolAllowed ? "EURUSD required" : not validPrice ? "Invalid price" : not spreadAllowed ? "Spread blocked" : not sessionAllowed ? "Outside session" : sampleCount < tickWindow ? "Warming buffer" : not jumpAllowed ? "Price jump filtered" : not volatilityAllowed ? "Volatility blocked" : dailyLossLocked ? "Daily loss locked" : entriesToday >= maxTradesPerDay ? "Daily trade limit" : not cooldownPassed ? "Entry cooldown" : not flat ? "Position open" : not quantityAllowed ? "Risk size below minimum" : "Ready"
-    string momentumText = na(momentumPips) ? "Unavailable" : str.tostring(momentumPips, "#.###") + " pips"
-    string dailyText = na(dailyPnlPercent) ? "Unavailable" : str.tostring(dailyPnlPercent, "#.##") + "%"
-    table.cell(status, 0, 0, "Momentum proxy", bgcolor=color.new(color.blue, 65), text_color=color.white)
-    table.cell(status, 1, 0, timeframe.period + " bars", bgcolor=color.new(color.blue, 65), text_color=color.white)
-    table.cell(status, 0, 1, "Momentum", text_color=color.white)
-    table.cell(status, 1, 1, momentumText, text_color=color.white)
-    table.cell(status, 0, 2, "Daily equity P&L", text_color=color.white)
-    table.cell(status, 1, 2, dailyText, text_color=color.white)
-    table.cell(status, 0, 3, "Entries today", text_color=color.white)
-    table.cell(status, 1, 3, str.tostring(entriesToday) + " / " + str.tostring(maxTradesPerDay), text_color=color.white)
-    table.cell(status, 0, 4, "Status", text_color=color.white)
-    table.cell(status, 1, 4, signalState, text_color=color.white)
+    table.cell(status, 0, 0, "BAR PROXY RC1", text_color=color.white, bgcolor=color.new(color.blue, 75), text_size=size.small)
+    table.cell(status, 1, 0, timeframe.period + " bars; NOT tick replay", text_color=color.white, bgcolor=color.new(color.black, 30), text_size=size.small)
+    table.cell(status, 0, 1, "Status", text_color=color.white, bgcolor=color.new(color.blue, 75), text_size=size.small)
+    table.cell(status, 1, 1, state, text_color=color.white, bgcolor=color.new(color.black, 30), text_size=size.small)
+    table.cell(status, 0, 2, "Warmup / momentum", text_color=color.white, bgcolor=color.new(color.blue, 75), text_size=size.small)
+    table.cell(status, 1, 2, str.tostring(math.min(sampleCount, tickWindow)) + "/" + str.tostring(tickWindow) + " | " + (na(momentumPips) ? "Unavailable" : str.tostring(momentumPips, "#.###") + " pips"), text_color=color.white, bgcolor=color.new(color.black, 30), text_size=size.small)
+    table.cell(status, 0, 3, "Daily equity P&L", text_color=color.white, bgcolor=color.new(color.blue, 75), text_size=size.small)
+    table.cell(status, 1, 3, str.tostring(dailyPnlPercent, "#.##") + "%", text_color=color.white, bgcolor=color.new(color.black, 30), text_size=size.small)
+    table.cell(status, 0, 4, "Entries / cooldown", text_color=color.white, bgcolor=color.new(color.blue, 75), text_size=size.small)
+    table.cell(status, 1, 4, str.tostring(entriesToday) + "/" + str.tostring(maxTradesPerDay) + " | " + str.tostring(cooldownRemaining) + " s", text_color=color.white, bgcolor=color.new(color.black, 30), text_size=size.small)
+    table.cell(status, 0, 5, "Next qty / stop risk", text_color=color.white, bgcolor=color.new(color.blue, 75), text_size=size.small)
+    table.cell(status, 1, 5, (quantityAllowed ? str.tostring(quantity) : "Rejected") + " | " + (quantityAllowed ? str.tostring(quantity * riskPerUnit, "#.##") : "n/a"), text_color=color.white, bgcolor=color.new(color.black, 30), text_size=size.small)
+    table.cell(status, 0, 6, "Costs: configure Properties", text_color=color.white, bgcolor=color.new(color.blue, 75), text_size=size.small)
+    table.cell(status, 1, 6, "Commission + slippage required; spread input is FILTER ONLY", text_color=color.white, bgcolor=color.new(color.black, 30), text_size=size.small)
+    table.cell(status, 0, 7, "Holding-time resolution", text_color=color.white, bgcolor=color.new(color.blue, 75), text_size=size.small)
+    table.cell(status, 1, 7, chartSeconds > maxHoldSeconds ? "WARNING: bar exceeds maximum hold" : "Bar-close exits; thresholds can overshoot", text_color=color.white, bgcolor=color.new(color.black, 30), text_size=size.small)
+    table.cell(status, 0, 8, "Native validation", text_color=color.white, bgcolor=color.new(color.blue, 75), text_size=size.small)
+    table.cell(status, 1, 8, "PENDING; no profitability result", text_color=color.white, bgcolor=color.new(color.black, 30), text_size=size.small)

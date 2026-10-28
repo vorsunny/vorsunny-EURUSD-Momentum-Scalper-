@@ -1,0 +1,67 @@
+{
+  "version": "3.0.0-rc.1",
+  "release_status": "prerelease-native-validation-pending",
+  "repository_validation": {
+    "status": "passed",
+    "date": "2026-10-28",
+    "scope": "Python tooling, source contracts and sync only; does not execute Pine",
+    "repository_sanity_tests": 8,
+    "tooling_and_release_tests": 15,
+    "commands": [
+      "python3 Tools/build_tradingview.py --check",
+      "python3 Tests/static_checks.py",
+      "python3 -m unittest discover -s Tests -p 'test_*.py' -v",
+      "git diff --check"
+    ],
+    "native_tests_executed": false
+  },
+  "gates": {
+    "pine_compilation": {
+      "status": "pending",
+      "evidence": [],
+      "reason": "No TradingView editor/compiler connection in workspace"
+    },
+    "native_helper_tests": {
+      "status": "pending",
+      "evidence": [],
+      "reason": "Native Pine self-test authored but not executed"
+    },
+    "live_alert_reconciliation": {
+      "status": "pending",
+      "evidence": [],
+      "active_sessions": 0,
+      "signal_events": 0,
+      "unexplained_mismatches": null,
+      "reason": "No live event exports or current-version chart observations collected"
+    },
+    "reload_and_closed_browser": {
+      "status": "pending",
+      "evidence": []
+    },
+    "strategy_controls": {
+      "status": "pending",
+      "evidence": []
+    },
+    "reproducible_cost_settings": {
+      "status": "pending",
+      "evidence": [],
+      "reason": "Broker cost schedule and quantity specification not yet recorded"
+    }
+  },
+  "performance": {
+    "status": "not_run",
+    "development": {
+      "start_utc": "2026-01-01",
+      "end_exclusive_utc": "2026-07-01",
+      "prior_exposure": "unknown",
+      "results": null
+    },
+    "held_out_evaluation": {
+      "start_utc": "2026-07-01",
+      "end_exclusive_utc": "2026-10-01",
+      "prior_exposure": "unknown_not_established_as_untouched",
+      "inputs_frozen": false,
+      "results": null
+    }
+  }
+}

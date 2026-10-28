@@ -1,7 +1,6 @@
 //@version=6
-indicator("EURUSD Momentum Scalper TV Companion v2.2", shorttitle="EUR Mom", overlay=true, max_labels_count=50)
-
-// Signals and alerting only. Pine indicators cannot submit broker orders or enforce account risk.
+indicator("EURUSD Momentum Scalper v3.0 RC1", shorttitle="EUR Mom", overlay=true, max_labels_count=50)
+// Release candidate: native Pine and live-session validation are pending.
 int tickWindow = input.int(30, "Rolling sample window", minval=2, maxval=512)
 float momentumThresholdPips = input.float(1.5, "Momentum threshold (pips)", minval=0.1, step=0.1)
 float stopLossPips = input.float(5.0, "Indicative stop distance (pips)", minval=0.1, step=0.1)
@@ -24,15 +23,113 @@ string samplingMode = input.string("Realtime updates", "Sampling mode", options=
 float pipSizeOverride = input.float(0.0, "Pip size override (0 = auto)", minval=0.0, step=0.00001)
 bool requireEURUSD = input.bool(true, "Require EURUSD chart")
 
-int CAPACITY = 512
-// FX pip size is a quote-currency convention, not a function of feed precision.
-// This handles fractional and non-fractional EURUSD quotes consistently.
-bool isEURUSD = syminfo.basecurrency == "EUR" and syminfo.currency == "USD"
-float autoPip = isEURUSD ? 0.0001 : syminfo.type == "forex" ? (syminfo.currency == "JPY" ? 0.01 : 0.0001) : syminfo.mintick
-float pip = pipSizeOverride > 0.0 ? pipSizeOverride : autoPip
-bool symbolAllowed = not requireEURUSD or isEURUSD
+bool showDashboard = input.bool(true, "Show dashboard")
+bool showReferences = input.bool(true, "Show indicative SL/TP")
 
-// varip preserves the rolling samples and signal latch between realtime executions of a bar.
+// BEGIN SHARED MOMENTUM CORE
+// Shared Pine v6 helpers. Synced into standalone scripts by Tools/build_tradingview.py.
+ms_pip(bool eurusd, string instrumentType, string quoteCurrency, float tick, float overridePip) =>
+    overridePip > 0 ? overridePip : eurusd ? 0.0001 : instrumentType == "forex" ? (quoteCurrency == "JPY" ? 0.01 : 0.0001) : tick
+
+ms_session(int stamp, string zone, bool enabled, int startMinute, int endMinute) =>
+    int minuteOfDay = hour(stamp, zone) * 60 + minute(stamp, zone)
+    not enabled or startMinute == endMinute or (startMinute < endMinute ? minuteOfDay >= startMinute and minuteOfDay < endMinute : minuteOfDay >= startMinute or minuteOfDay < endMinute)
+
+// Caller passes only valid eligible samples. Gap resets seed with this sample;
+// a price jump is discarded and the next sample starts the new window.
+ms_window(array<float> prices, array<int> stamps, int next, int count, float price, int stamp, int window, float pip, float gapLimitMs, float jumpLimitPips) =>
+    int capacity = array.size(prices)
+    int n = next
+    int c = count
+    int reset = 0
+    if c > 0
+        int newest = (n - 1 + capacity) % capacity
+        int gap = stamp - array.get(stamps, newest)
+        if gap < 0 or gap > gapLimitMs
+            n := 0
+            c := 0
+            reset := 1
+    bool jump = c > 0 and jumpLimitPips > 0 and math.abs(price - array.get(prices, (n - 1 + capacity) % capacity)) / pip > jumpLimitPips
+    if jump
+        n := 0
+        c := 0
+        reset := 2
+    else
+        array.set(prices, n, price)
+        array.set(stamps, n, stamp)
+        n := (n + 1) % capacity
+        c := math.min(c + 1, capacity)
+    float momentum = na
+    float priceRange = na
+    int active = 0
+    if not jump
+        for offset = 0 to c - 1
+            if stamp - array.get(stamps, (n - 1 - offset + capacity) % capacity) > 60000
+                break
+            active += 1
+        if c >= window
+            // Remove floating subtraction noise at exact pip thresholds.
+            momentum := math.round((price - array.get(prices, (n - window + capacity) % capacity)) / pip, 9)
+            float low = price
+            float high = price
+            for offset = 0 to window - 1
+                float value = array.get(prices, (n - 1 - offset + capacity) % capacity)
+                low := math.min(low, value)
+                high := math.max(high, value)
+            priceRange := math.round((high - low) / pip, 9)
+    [n, c, momentum, priceRange, active, reset]
+
+// Consumes a threshold episode even when the caller's execution gates block it.
+ms_episode(float momentum, float threshold, int latch, bool eligible) =>
+    int nextLatch = latch
+    int candidate = 0
+    if eligible and not na(momentum)
+        if math.abs(momentum) < threshold * 0.5
+            nextLatch := 0
+        int direction = momentum >= threshold ? 1 : momentum <= -threshold ? -1 : 0
+        if direction != 0 and direction != nextLatch
+            candidate := direction
+            nextLatch := direction
+    [nextLatch, candidate]
+
+ms_cooldown(int stamp, int lastEvent, int seconds) =>
+    na(lastEvent) ? 0 : int(math.max(0, math.ceil((lastEvent + seconds * 1000.0 - stamp) / 1000.0)))
+
+ms_can_signal(int candidate, int stamp, int lastEvent, int seconds, int eventsToday, int cap) =>
+    candidate != 0 and ms_cooldown(stamp, lastEvent, seconds) == 0 and eventsToday < cap
+
+ms_ticks(float distancePips, float pip, float tick) =>
+    int(math.max(1, math.round(distancePips * pip / tick)))
+
+ms_quantity(float budget, float riskPerUnit, float step, float minimum, float maximum) =>
+    float quantity = na
+    if budget > 0 and riskPerUnit > 0 and step > 0 and maximum >= minimum
+        quantity := math.floor(math.min(budget / riskPerUnit, maximum) / step) * step
+    bool allowed = not na(quantity) and quantity >= minimum and quantity > 0
+    [quantity, allowed]
+
+ms_daily(bool newDay, float previousEquity, float equity, float initialCapital, float oldBaseline, bool oldLock, float limitPercent) =>
+    float baseline = newDay ? nz(previousEquity, initialCapital) : oldBaseline
+    float pnl = baseline > 0 ? (equity - baseline) / baseline * 100.0 : na
+    bool locked = (newDay ? false : oldLock) or (limitPercent > 0 and not na(pnl) and pnl <= -limitPercent)
+    [baseline, pnl, locked]
+// END SHARED MOMENTUM CORE
+
+int CAPACITY = 512
+bool eurusd = syminfo.basecurrency == "EUR" and syminfo.currency == "USD"
+float pip = ms_pip(eurusd, syminfo.type, syminfo.currency, syminfo.mintick, pipSizeOverride)
+bool symbolAllowed = not requireEURUSD or eurusd
+// Proxy time calculations require standard time-based charts.
+bool chartAllowed = chart.is_standard and not str.endswith(timeframe.period, "T")
+float chartSeconds = chartAllowed ? timeframe.in_seconds() : na
+bool useRealtimeTicks = samplingMode == "Realtime updates"
+bool sampleNow = useRealtimeTicks ? barstate.isrealtime : barstate.isconfirmed
+int sampleTime = useRealtimeTicks and barstate.isrealtime ? timenow : time_close
+bool validPrice = not na(sampleTime) and not na(close) and close > 0 and pip > 0
+bool sessionAllowed = ms_session(sampleTime, sessionTimezone, sessionFilterEnabled, sessionStartHour * 60 + sessionStartMinute, sessionEndHour * 60 + sessionEndMinute)
+bool spreadAllowed = maxSpreadPips <= 0 or assumedSpreadPips <= maxSpreadPips
+bool eligibleSample = sampleNow and chartAllowed and symbolAllowed and validPrice and spreadAllowed and sessionAllowed
+
 varip array<float> prices = array.new_float(CAPACITY, na)
 varip array<int> sampleTimes = array.new_int(CAPACITY, na)
 varip int nextSlot = 0
@@ -41,148 +138,103 @@ varip int latchedDirection = 0
 varip int lastSignalTime = na
 varip int activeDay = na
 varip int signalsToday = 0
+varip int sessionSignals = 0
+varip int runStarted = timenow
 varip int seenBar = na
 varip bool buyPulse = false
 varip bool sellPulse = false
 varip float latestStop = na
 varip float latestTarget = na
-
-// Alert conditions pulse only on the execution that creates a signal.
-// The separate persistent flags keep markers visible for the rest of the bar.
+varip float latestPrice = na
+varip string latestDirection = "None"
+varip string latestId = "None"
+varip float momentumPips = na
+varip float windowRangePips = na
+varip int activeSamples = 0
 bool buyEvent = false
 bool sellEvent = false
+int resetReason = 0
 
 if na(seenBar) or bar_index != seenBar
     seenBar := bar_index
     buyPulse := false
     sellPulse := false
 
-bool useRealtimeTicks = samplingMode == "Realtime updates"
-bool sampleNow = useRealtimeTicks ? barstate.isrealtime : barstate.isconfirmed
-int sampleTime = useRealtimeTicks and barstate.isrealtime ? timenow : time_close
-int hourNow = hour(sampleTime, sessionTimezone)
-int minuteNow = minute(sampleTime, sessionTimezone)
-int minuteOfDay = hourNow * 60 + minuteNow
-int sessionStart = sessionStartHour * 60 + sessionStartMinute
-int sessionEnd = sessionEndHour * 60 + sessionEndMinute
-bool sessionAllowed = not sessionFilterEnabled or sessionStart == sessionEnd or (sessionStart < sessionEnd ? minuteOfDay >= sessionStart and minuteOfDay < sessionEnd : minuteOfDay >= sessionStart or minuteOfDay < sessionEnd)
-bool spreadAllowed = maxSpreadPips <= 0.0 or assumedSpreadPips <= maxSpreadPips
-float sampledPrice = close
-bool validPrice = not na(sampleTime) and not na(sampledPrice) and sampledPrice > 0.0 and pip > 0.0
-bool eligibleSample = sampleNow and chart.is_standard and symbolAllowed and validPrice and spreadAllowed and sessionAllowed
-
-bool acceptedSample = false
 if eligibleSample
-    if sampleCount > 0
-        int newestSlot = (nextSlot - 1 + CAPACITY) % CAPACITY
-        int gapMs = sampleTime - array.get(sampleTimes, newestSlot)
-        float gapLimitMs = useRealtimeTicks ? maxLiveGapSeconds * 1000.0 : timeframe.in_seconds() * 3000.0
-        if gapMs < 0 or gapMs > gapLimitMs
-            nextSlot := 0
-            sampleCount := 0
-            latchedDirection := 0
-    float previousPrice = na
-    if sampleCount > 0
-        int previousSlot = (nextSlot - 1 + CAPACITY) % CAPACITY
-        previousPrice := array.get(prices, previousSlot)
-    bool jumpAllowed = na(previousPrice) or maxSingleSampleJumpPips <= 0.0 or math.abs(sampledPrice - previousPrice) / pip <= maxSingleSampleJumpPips
-    if jumpAllowed
-        array.set(prices, nextSlot, sampledPrice)
-        array.set(sampleTimes, nextSlot, sampleTime)
-        nextSlot := (nextSlot + 1) % CAPACITY
-        sampleCount := math.min(sampleCount + 1, CAPACITY)
-        acceptedSample := true
-    else
-        // Discard the jump and warm a fresh window on subsequent updates.
-        nextSlot := 0
-        sampleCount := 0
+    float gapLimitMs = useRealtimeTicks ? maxLiveGapSeconds * 1000.0 : chartSeconds * 3000.0
+    [next, count, momentum, priceRange, active, reset] = ms_window(prices, sampleTimes, nextSlot, sampleCount, close, sampleTime, tickWindow, pip, gapLimitMs, maxSingleSampleJumpPips)
+    nextSlot := next
+    sampleCount := count
+    momentumPips := momentum
+    windowRangePips := priceRange
+    activeSamples := active
+    resetReason := reset
+    if reset != 0
         latchedDirection := 0
 
-float momentumPips = na
-float windowRangePips = na
-int activeSamples = 0
-bool volatilityAllowed = false
-bool activityAllowed = false
-
-if acceptedSample and sampleCount >= tickWindow
-    int oldestSlot = (nextSlot - tickWindow + CAPACITY) % CAPACITY
-    momentumPips := (sampledPrice - array.get(prices, oldestSlot)) / pip
-    float lowest = sampledPrice
-    float highest = sampledPrice
-    for offset = 0 to tickWindow - 1
-        int slot = (nextSlot - 1 - offset + CAPACITY) % CAPACITY
-        float value = array.get(prices, slot)
-        lowest := math.min(lowest, value)
-        highest := math.max(highest, value)
-    windowRangePips := (highest - lowest) / pip
-    volatilityAllowed := maxWindowRangePips <= 0.0 or windowRangePips <= maxWindowRangePips
-    for offset = 0 to sampleCount - 1
-        int slot = (nextSlot - 1 - offset + CAPACITY) % CAPACITY
-        int stamp = array.get(sampleTimes, slot)
-        if na(stamp) or sampleTime - stamp > 60000
-            break
-        activeSamples += 1
-    activityAllowed := not useRealtimeTicks or activeSamples >= minSamplesPerMinute
-
 int dayId = year(sampleTime, sessionTimezone) * 10000 + month(sampleTime, sessionTimezone) * 100 + dayofmonth(sampleTime, sessionTimezone)
-if sampleNow and (na(activeDay) or dayId != activeDay)
+if sampleNow and not na(sampleTime) and (na(activeDay) or dayId != activeDay)
     activeDay := dayId
     signalsToday := 0
 
-int candidateDirection = 0
-if not na(momentumPips) and volatilityAllowed and activityAllowed
-    if math.abs(momentumPips) < momentumThresholdPips * 0.5
-        latchedDirection := 0
-    candidateDirection := momentumPips >= momentumThresholdPips ? 1 : momentumPips <= -momentumThresholdPips ? -1 : 0
-    if candidateDirection == latchedDirection
-        candidateDirection := 0
+bool volatilityAllowed = not na(windowRangePips) and (maxWindowRangePips <= 0 or windowRangePips <= maxWindowRangePips)
+bool activityAllowed = not useRealtimeTicks or activeSamples >= minSamplesPerMinute
+[latch, candidate] = ms_episode(momentumPips, momentumThresholdPips, latchedDirection, eligibleSample and volatilityAllowed and activityAllowed)
+latchedDirection := latch
+if ms_can_signal(candidate, sampleTime, lastSignalTime, cooldownSeconds, signalsToday, maxSignalsPerDay)
+    buyEvent := candidate == 1
+    sellEvent := candidate == -1
+    buyPulse := buyPulse or buyEvent
+    sellPulse := sellPulse or sellEvent
+    lastSignalTime := sampleTime
+    signalsToday += 1
+    sessionSignals += 1
+    latestDirection := candidate > 0 ? "BUY" : "SELL"
+    latestPrice := close
+    latestStop := close - candidate * stopLossPips * pip
+    latestTarget := close + candidate * takeProfitPips * pip
+    latestId := syminfo.tickerid + ":" + str.tostring(runStarted) + ":" + str.tostring(sampleTime) + ":" + str.tostring(sessionSignals)
+    string detailedAlert = "MS3|id=" + latestId + "|feed=" + syminfo.tickerid + "|mode=" + samplingMode + "|time_ms=" + str.tostring(sampleTime) + "|time=" + str.format_time(sampleTime, "yyyy-MM-dd HH:mm:ss", sessionTimezone) + "|tz=" + sessionTimezone + "|direction=" + latestDirection + "|momentum_pips=" + str.tostring(momentumPips, "#.######") + "|sample_count=" + str.tostring(tickWindow) + "|price=" + str.tostring(latestPrice, format.mintick) + "|stop=" + str.tostring(latestStop, format.mintick) + "|target=" + str.tostring(latestTarget, format.mintick) + "|assumed_spread_pips=" + str.tostring(assumedSpreadPips)
+    alert(detailedAlert, alert.freq_all)
 
-bool cooldownPassed = na(lastSignalTime) or sampleTime - lastSignalTime >= cooldownSeconds * 1000
+// Compute display state AFTER event updates, including the event that hit the cap.
+int cooldownRemaining = ms_cooldown(sampleTime, lastSignalTime, cooldownSeconds)
 bool dailyLimitPassed = signalsToday < maxSignalsPerDay
-if candidateDirection != 0
-    // Consume a threshold episode even if cooldown or daily signal cap blocks its alert.
-    latchedDirection := candidateDirection
-    if cooldownPassed and dailyLimitPassed
-        buyEvent := candidateDirection == 1
-        sellEvent := candidateDirection == -1
-        if buyEvent
-            buyPulse := true
-        if sellEvent
-            sellPulse := true
-        lastSignalTime := sampleTime
-        signalsToday += 1
-        latestStop := sampledPrice - candidateDirection * stopLossPips * pip
-        latestTarget := sampledPrice + candidateDirection * takeProfitPips * pip
-        string directionText = candidateDirection > 0 ? "BUY" : "SELL"
-        string detailedAlert = syminfo.tickerid + " Momentum " + directionText +
-          " | mode=" + samplingMode +
-          " | time=" + str.format_time(sampleTime, "yyyy-MM-dd HH:mm:ss", sessionTimezone) +
-          " | momentum=" + str.tostring(momentumPips, "#.###") + " pips" +
-          " | price=" + str.tostring(sampledPrice, format.mintick) +
-          " | stop=" + str.tostring(latestStop, format.mintick) +
-          " | target=" + str.tostring(latestTarget, format.mintick) +
-          " | spread assumption=" + str.tostring(assumedSpreadPips, "#.##") + " pips"
-        alert(detailedAlert, alert.freq_all)
-
-plotshape(buyPulse, title="Momentum BUY", style=shape.labelup, location=location.belowbar, color=color.new(color.green, 0), text="BUY", textcolor=color.white, size=size.tiny)
-plotshape(sellPulse, title="Momentum SELL", style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 0), text="SELL", textcolor=color.white, size=size.tiny)
-plot(latestStop, title="Latest indicative stop", color=color.new(color.red, 15), linewidth=1, style=plot.style_linebr)
-plot(latestTarget, title="Latest indicative target", color=color.new(color.green, 15), linewidth=1, style=plot.style_linebr)
-plot(momentumPips, title="Momentum (pips)", color=color.new(color.blue, 100), display=display.data_window)
-
-alertcondition(buyEvent, title="EURUSD Momentum BUY", message="EURUSD Momentum Scalper BUY signal. Confirm spread, execution, and risk manually.")
-alertcondition(sellEvent, title="EURUSD Momentum SELL", message="EURUSD Momentum Scalper SELL signal. Confirm spread, execution, and risk manually.")
-
-var table status = table.new(position.top_right, 2, 4, border_width=1)
+string state = not chartAllowed ? "Use standard time-based candles" : not symbolAllowed ? "EURUSD required" : not validPrice ? "Invalid quote/time" : not sampleNow ? "Waiting for bar close" : not spreadAllowed ? "Spread assumption blocked" : not sessionAllowed ? "Outside session" : not dailyLimitPassed ? "Daily signal limit" : resetReason == 2 ? "Price jump: window reset" : sampleCount < tickWindow ? "Warming buffer" : cooldownRemaining > 0 ? "Signal cooldown" : not volatilityAllowed ? "Volatility blocked" : not activityAllowed ? "Activity below minimum" : "Ready"
+plotshape(buyPulse, title="Momentum BUY", style=shape.labelup, location=location.belowbar, color=color.green, text="BUY", textcolor=color.white, size=size.tiny)
+plotshape(sellPulse, title="Momentum SELL", style=shape.labeldown, location=location.abovebar, color=color.red, text="SELL", textcolor=color.white, size=size.tiny)
+plot(showReferences ? latestStop : na, title="Latest indicative stop", color=color.red, style=plot.style_linebr)
+plot(showReferences ? latestTarget : na, title="Latest indicative target", color=color.green, style=plot.style_linebr)
+plot(momentumPips, title="Momentum (pips)", display=display.data_window)
+alertcondition(buyEvent, title="EURUSD Momentum BUY", message="Momentum BUY. Reference levels only; check risk and execution.")
+alertcondition(sellEvent, title="EURUSD Momentum SELL", message="Momentum SELL. Reference levels only; check risk and execution.")
+var label slTag = label.new(na, na, "Indicative SL", style=label.style_label_left, color=color.new(color.red, 60), textcolor=color.white, size=size.tiny)
+var label tpTag = label.new(na, na, "Indicative TP", style=label.style_label_left, color=color.new(color.green, 60), textcolor=color.white, size=size.tiny)
 if barstate.islast
-    string modeText = useRealtimeTicks ? "Live chart updates" : "Bar-close proxy"
-    string momentumText = na(momentumPips) ? "Warming / unavailable" : str.tostring(momentumPips, "#.###") + " pips"
-    string filterText = not chart.is_standard ? "Use standard candles" : not validPrice ? "Invalid quote/time" : not symbolAllowed ? "EURUSD required" : not sampleNow ? "Waiting for bar close" : not spreadAllowed ? "Spread assumption blocked" : not sessionAllowed ? "Outside session" : sampleCount < tickWindow ? "Warming buffer" : not dailyLimitPassed ? "Daily signal limit" : not cooldownPassed ? "Signal cooldown" : not volatilityAllowed ? "Volatility blocked" : (useRealtimeTicks and not activityAllowed) ? "Activity below minimum" : "Ready"
-    table.cell(status, 0, 0, "EURUSD Momentum", bgcolor=color.new(color.blue, 65), text_color=color.white)
-    table.cell(status, 1, 0, modeText, bgcolor=color.new(color.blue, 65), text_color=color.white)
-    table.cell(status, 0, 1, "Momentum", text_color=color.white)
-    table.cell(status, 1, 1, momentumText, text_color=color.white)
-    table.cell(status, 0, 2, "Spread assumption", text_color=color.white)
-    table.cell(status, 1, 2, str.tostring(assumedSpreadPips, "#.##") + " pips", text_color=color.white)
-    table.cell(status, 0, 3, "Status", text_color=color.white)
-    table.cell(status, 1, 3, filterText, text_color=color.white)
+    label.set_xy(slTag, bar_index + 1, showReferences ? latestStop : na)
+    label.set_xy(tpTag, bar_index + 1, showReferences ? latestTarget : na)
+
+var table status = table.new(position.top_right, 2, 11, border_width=1)
+if barstate.islast and showDashboard
+    table.cell(status, 0, 0, "EURUSD Momentum RC1", text_color=color.white, bgcolor=color.new(color.blue, 75), text_size=size.small)
+    table.cell(status, 1, 0, samplingMode, text_color=color.white, bgcolor=color.new(color.black, 30), text_size=size.small)
+    table.cell(status, 0, 1, "Feed", text_color=color.white, bgcolor=color.new(color.blue, 75), text_size=size.small)
+    table.cell(status, 1, 1, syminfo.tickerid, text_color=color.white, bgcolor=color.new(color.black, 30), text_size=size.small)
+    table.cell(status, 0, 2, "Status", text_color=color.white, bgcolor=color.new(color.blue, 75), text_size=size.small)
+    table.cell(status, 1, 2, state, text_color=color.white, bgcolor=color.new(color.black, 30), text_size=size.small)
+    table.cell(status, 0, 3, "Warmup", text_color=color.white, bgcolor=color.new(color.blue, 75), text_size=size.small)
+    table.cell(status, 1, 3, str.tostring(math.min(sampleCount, tickWindow)) + "/" + str.tostring(tickWindow), text_color=color.white, bgcolor=color.new(color.black, 30), text_size=size.small)
+    table.cell(status, 0, 4, "Momentum (last accepted)", text_color=color.white, bgcolor=color.new(color.blue, 75), text_size=size.small)
+    table.cell(status, 1, 4, na(momentumPips) ? "Unavailable" : str.tostring(momentumPips, "#.###") + " pips", text_color=color.white, bgcolor=color.new(color.black, 30), text_size=size.small)
+    table.cell(status, 0, 5, "Cooldown", text_color=color.white, bgcolor=color.new(color.blue, 75), text_size=size.small)
+    table.cell(status, 1, 5, str.tostring(cooldownRemaining) + " s", text_color=color.white, bgcolor=color.new(color.black, 30), text_size=size.small)
+    table.cell(status, 0, 6, "Signals today", text_color=color.white, bgcolor=color.new(color.blue, 75), text_size=size.small)
+    table.cell(status, 1, 6, str.tostring(signalsToday) + "/" + str.tostring(maxSignalsPerDay), text_color=color.white, bgcolor=color.new(color.black, 30), text_size=size.small)
+    table.cell(status, 0, 7, "Latest signal", text_color=color.white, bgcolor=color.new(color.blue, 75), text_size=size.small)
+    table.cell(status, 1, 7, na(lastSignalTime) ? "None" : latestDirection + " " + str.format_time(lastSignalTime, "yyyy-MM-dd HH:mm:ss", sessionTimezone) + " " + sessionTimezone, text_color=color.white, bgcolor=color.new(color.black, 30), text_size=size.small)
+    table.cell(status, 0, 8, "Signal price", text_color=color.white, bgcolor=color.new(color.blue, 75), text_size=size.small)
+    table.cell(status, 1, 8, na(latestPrice) ? "None" : str.tostring(latestPrice, format.mintick), text_color=color.white, bgcolor=color.new(color.black, 30), text_size=size.small)
+    table.cell(status, 0, 9, "Indicative SL / TP", text_color=color.white, bgcolor=color.new(color.blue, 75), text_size=size.small)
+    table.cell(status, 1, 9, na(latestStop) ? "None" : str.tostring(latestStop, format.mintick) + " / " + str.tostring(latestTarget, format.mintick), text_color=color.white, bgcolor=color.new(color.black, 30), text_size=size.small)
+    table.cell(status, 0, 10, "Signal ID", text_color=color.white, bgcolor=color.new(color.blue, 75), text_size=size.small)
+    table.cell(status, 1, 10, latestId, text_color=color.white, bgcolor=color.new(color.black, 30), text_size=size.small)

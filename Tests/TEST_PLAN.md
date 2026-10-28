@@ -42,10 +42,8 @@ Some scenarios require a scripted fixture, a broker demo, or tester support for 
 - Native compilation, Strategy Tester, broker rejection, partial fills, and hedging/netting execution: unverified.
 
 
-## TradingView strategy proxy status
+## TradingView release candidate validation
 
-- Pine v6 indicator and strategy sources pass static repository checks for expected declarations, chart alerts/strategy order calls, absence of strategy orders in the indicator, and balanced braces.
-- A user screenshot showed an earlier indicator version loaded on a chart. The current revisions of the indicator and strategy have not been compiled or run in TradingView by this environment, and no performance metrics are reported.
-- TradingView companion version 2.0 aligns shared defaults with the cTrader port and makes the bar-close versus tick/midpoint differences explicit. The scripts have not been compiled in Pine Editor by this environment.
-- In TradingView, run the strategy on EURUSD 1-minute bars for Jan–Jun 2026, freeze parameters, then run Jul–Sep 2026 out-of-sample. Confirm symbol point value and quantity units, verify daily-lock behavior around the selected timezone's day boundary, and set actual commission/slippage in Strategy Properties before interpreting results.
-- On standard candles, compare the indicator in Bar-close proxy mode against strategy order submissions using matching settings. Investigate differences using the strategy's position, risk and daily limits. Check live bar-close behavior at the session and daily boundary, and check the indicator alerts in realtime. Verify plotted brackets against actual simulated fills and confirm entries are blocked on nonstandard charts.
+See [the TradingView validation checklist](../Docs/TradingView/VALIDATION.md) and [machine-readable evidence status](../Docs/TradingView/validation_results.json). The native Pine helper harness uses the exact shared functions embedded in the shipped indicator/proxy, but has not been executed in this environment. Python tests validate source sync, log-checking with synthetic events and candidate packaging/release gates. Those are not native trading results.
+
+Current Pine compilation, live alert reconciliation, reload/closed-browser checks and Strategy Tester results are pending. Three active sessions, ten signal events and zero unexplained mismatches are required for native/live acceptance. Cost settings and prior test-period exposure must be recorded; performance results remain absent.

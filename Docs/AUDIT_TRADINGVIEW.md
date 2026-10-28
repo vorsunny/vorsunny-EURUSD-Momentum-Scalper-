@@ -1,5 +1,7 @@
 # TradingView code audit — version 2.2
 
+Historical audit snapshot. Current source and validation status are documented in `TradingView/VALIDATION.md`; this file is not a validation report for version 3.
+
 Scope: the Pine indicator and Strategy Tester proxy. This is a correctness and usability review; it does not establish profitability or validate cTrader/MT5 execution.
 
 ## Findings fixed
