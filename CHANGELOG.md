@@ -31,3 +31,9 @@
 - Initial modular EURUSD tick-momentum EA.
 - Added fixed circular signal buffer, configurable market filters, independent position sizing, account-wide daily loss circuit breaker, bounded native execution flow, timed exits, CSV diagnostics, and demo-only gate.
 - Added installation, risk, strategy, backtest, and validation documentation.
+
+## TradingView companion 2.2 — 2026-10-28
+
+- Audited the Pine scripts and fixed EURUSD CFD pip sizing, stale sample windows, synthetic-chart parity and first-bar daily equity accounting.
+- Rounded stop distances consistently with risk sizing, gated momentum on accepted samples, and improved alert identity/time and dashboard diagnostics.
+- Recorded findings and native-validation limits in `Docs/AUDIT_TRADINGVIEW.md`.

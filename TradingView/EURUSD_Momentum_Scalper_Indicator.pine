@@ -1,5 +1,5 @@
 //@version=6
-indicator("EURUSD Momentum Scalper TV Companion v2.1", shorttitle="EUR Mom", overlay=true, max_labels_count=50)
+indicator("EURUSD Momentum Scalper TV Companion v2.2", shorttitle="EUR Mom", overlay=true, max_labels_count=50)
 
 // Signals and alerting only. Pine indicators cannot submit broker orders or enforce account risk.
 int tickWindow = input.int(30, "Rolling sample window", minval=2, maxval=512)
@@ -8,6 +8,7 @@ float stopLossPips = input.float(5.0, "Indicative stop distance (pips)", minval=
 float takeProfitPips = input.float(7.5, "Indicative target distance (pips)", minval=0.1, step=0.1)
 float maxSpreadPips = input.float(1.0, "Maximum assumed spread (pips); 0 disables", minval=0.0, step=0.1)
 float assumedSpreadPips = input.float(1.0, "Assumed spread (pips)", minval=0.0, step=0.1)
+int maxLiveGapSeconds = input.int(120, "Reset live buffer after gap (seconds)", minval=1)
 int cooldownSeconds = input.int(30, "Minimum seconds between alerts", minval=0)
 int maxSignalsPerDay = input.int(30, "Maximum signals per day", minval=1, maxval=500)
 int minSamplesPerMinute = input.int(10, "Minimum samples in last minute", minval=0, maxval=512)
@@ -26,9 +27,9 @@ bool requireEURUSD = input.bool(true, "Require EURUSD chart")
 int CAPACITY = 512
 // FX pip size is a quote-currency convention, not a function of feed precision.
 // This handles fractional and non-fractional EURUSD quotes consistently.
-float autoPip = syminfo.type == "forex" ? (syminfo.currency == "JPY" ? 0.01 : 0.0001) : (syminfo.mintick < 0.0001 ? syminfo.mintick * 10.0 : syminfo.mintick)
-float pip = pipSizeOverride > 0.0 ? pipSizeOverride : autoPip
 bool isEURUSD = syminfo.basecurrency == "EUR" and syminfo.currency == "USD"
+float autoPip = isEURUSD ? 0.0001 : syminfo.type == "forex" ? (syminfo.currency == "JPY" ? 0.01 : 0.0001) : syminfo.mintick
+float pip = pipSizeOverride > 0.0 ? pipSizeOverride : autoPip
 bool symbolAllowed = not requireEURUSD or isEURUSD
 
 // varip preserves the rolling samples and signal latch between realtime executions of a bar.
@@ -67,11 +68,19 @@ int sessionEnd = sessionEndHour * 60 + sessionEndMinute
 bool sessionAllowed = not sessionFilterEnabled or sessionStart == sessionEnd or (sessionStart < sessionEnd ? minuteOfDay >= sessionStart and minuteOfDay < sessionEnd : minuteOfDay >= sessionStart or minuteOfDay < sessionEnd)
 bool spreadAllowed = maxSpreadPips <= 0.0 or assumedSpreadPips <= maxSpreadPips
 float sampledPrice = close
-bool validPrice = not na(sampledPrice) and sampledPrice > 0.0 and pip > 0.0
-bool eligibleSample = sampleNow and symbolAllowed and validPrice and spreadAllowed and sessionAllowed
+bool validPrice = not na(sampleTime) and not na(sampledPrice) and sampledPrice > 0.0 and pip > 0.0
+bool eligibleSample = sampleNow and chart.is_standard and symbolAllowed and validPrice and spreadAllowed and sessionAllowed
 
 bool acceptedSample = false
 if eligibleSample
+    if sampleCount > 0
+        int newestSlot = (nextSlot - 1 + CAPACITY) % CAPACITY
+        int gapMs = sampleTime - array.get(sampleTimes, newestSlot)
+        float gapLimitMs = useRealtimeTicks ? maxLiveGapSeconds * 1000.0 : timeframe.in_seconds() * 3000.0
+        if gapMs < 0 or gapMs > gapLimitMs
+            nextSlot := 0
+            sampleCount := 0
+            latchedDirection := 0
     float previousPrice = na
     if sampleCount > 0
         int previousSlot = (nextSlot - 1 + CAPACITY) % CAPACITY
@@ -145,7 +154,9 @@ if candidateDirection != 0
         latestStop := sampledPrice - candidateDirection * stopLossPips * pip
         latestTarget := sampledPrice + candidateDirection * takeProfitPips * pip
         string directionText = candidateDirection > 0 ? "BUY" : "SELL"
-        string detailedAlert = "EURUSD Momentum Scalper " + directionText +
+        string detailedAlert = syminfo.tickerid + " Momentum " + directionText +
+          " | mode=" + samplingMode +
+          " | time=" + str.format_time(sampleTime, "yyyy-MM-dd HH:mm:ss", sessionTimezone) +
           " | momentum=" + str.tostring(momentumPips, "#.###") + " pips" +
           " | price=" + str.tostring(sampledPrice, format.mintick) +
           " | stop=" + str.tostring(latestStop, format.mintick) +
@@ -166,7 +177,7 @@ var table status = table.new(position.top_right, 2, 4, border_width=1)
 if barstate.islast
     string modeText = useRealtimeTicks ? "Live chart updates" : "Bar-close proxy"
     string momentumText = na(momentumPips) ? "Warming / unavailable" : str.tostring(momentumPips, "#.###") + " pips"
-    string filterText = not symbolAllowed ? "EURUSD required" : not sampleNow ? "Waiting for bar close" : not spreadAllowed ? "Spread assumption blocked" : not sessionAllowed ? "Outside session" : sampleCount < tickWindow ? "Warming buffer" : not volatilityAllowed ? "Volatility blocked" : (useRealtimeTicks and not activityAllowed) ? "Activity below minimum" : "Ready"
+    string filterText = not chart.is_standard ? "Use standard candles" : not validPrice ? "Invalid quote/time" : not symbolAllowed ? "EURUSD required" : not sampleNow ? "Waiting for bar close" : not spreadAllowed ? "Spread assumption blocked" : not sessionAllowed ? "Outside session" : sampleCount < tickWindow ? "Warming buffer" : not dailyLimitPassed ? "Daily signal limit" : not cooldownPassed ? "Signal cooldown" : not volatilityAllowed ? "Volatility blocked" : (useRealtimeTicks and not activityAllowed) ? "Activity below minimum" : "Ready"
     table.cell(status, 0, 0, "EURUSD Momentum", bgcolor=color.new(color.blue, 65), text_color=color.white)
     table.cell(status, 1, 0, modeText, bgcolor=color.new(color.blue, 65), text_color=color.white)
     table.cell(status, 0, 1, "Momentum", text_color=color.white)

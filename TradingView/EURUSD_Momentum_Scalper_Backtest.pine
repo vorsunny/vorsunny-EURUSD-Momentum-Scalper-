@@ -1,5 +1,5 @@
 //@version=6
-strategy("EURUSD Momentum Scalper TV Companion v2.0", shorttitle="EUR Mom BT", overlay=true, initial_capital=10000, currency=currency.EUR, pyramiding=0, default_qty_type=strategy.fixed, default_qty_value=10000, commission_type=strategy.commission.cash_per_order, commission_value=0.0, slippage=0, process_orders_on_close=false, calc_on_every_tick=false, max_labels_count=50)
+strategy("EURUSD Momentum Scalper TV Companion v2.2", shorttitle="EUR Mom BT", overlay=true, initial_capital=10000, currency=currency.EUR, pyramiding=0, default_qty_type=strategy.fixed, default_qty_value=10000, commission_type=strategy.commission.cash_per_order, commission_value=0.0, slippage=0, process_orders_on_close=false, calc_on_every_tick=false, max_labels_count=50)
 
 // TradingView companion to the cTrader cBot. Historical samples are bar closes,
 // so this Strategy Tester script is a bar proxy, not a tick-equivalent test.
@@ -32,14 +32,15 @@ bool requireEURUSD = input.bool(true, "Require EURUSD chart")
 int CAPACITY = 512
 // FX pip size is a quote-currency convention, not a function of feed precision.
 // This handles fractional and non-fractional EURUSD quotes consistently.
-float autoPip = syminfo.type == "forex" ? (syminfo.currency == "JPY" ? 0.01 : 0.0001) : (syminfo.mintick < 0.0001 ? syminfo.mintick * 10.0 : syminfo.mintick)
-float pip = pipSizeOverride > 0.0 ? pipSizeOverride : autoPip
 bool isEURUSD = syminfo.basecurrency == "EUR" and syminfo.currency == "USD"
+float autoPip = isEURUSD ? 0.0001 : syminfo.type == "forex" ? (syminfo.currency == "JPY" ? 0.01 : 0.0001) : syminfo.mintick
+float pip = pipSizeOverride > 0.0 ? pipSizeOverride : autoPip
 bool symbolAllowed = not requireEURUSD or isEURUSD
 
 var array<float> prices = array.new_float(CAPACITY, na)
 var int nextSlot = 0
 var int sampleCount = 0
+var int lastSampleTime = na
 var int latchedDirection = 0
 var int lastEntryTime = na
 var int activeDay = na
@@ -55,8 +56,14 @@ int sessionStart = sessionStartHour * 60 + sessionStartMinute
 int sessionEnd = sessionEndHour * 60 + sessionEndMinute
 bool sessionAllowed = not sessionFilterEnabled or sessionStart == sessionEnd or (sessionStart < sessionEnd ? minuteOfDay >= sessionStart and minuteOfDay < sessionEnd : minuteOfDay >= sessionStart or minuteOfDay < sessionEnd)
 bool spreadAllowed = maxSpreadPips <= 0.0 or assumedSpreadPips <= maxSpreadPips
-bool validPrice = not na(close) and close > 0.0 and pip > 0.0
+bool validPrice = not na(sampleTime) and not na(close) and close > 0.0 and pip > 0.0
 bool acceptedBar = barstate.isconfirmed and chart.is_standard and symbolAllowed and validPrice and spreadAllowed and sessionAllowed
+
+// Clear samples after missing bars/session gaps; never compare disconnected windows.
+if acceptedBar and not na(lastSampleTime) and (sampleTime < lastSampleTime or sampleTime - lastSampleTime > timeframe.in_seconds() * 3000.0)
+    nextSlot := 0
+    sampleCount := 0
+    latchedDirection := 0
 
 float previousPrice = na
 if sampleCount > 0
@@ -64,6 +71,7 @@ if sampleCount > 0
     previousPrice := array.get(prices, previousSlot)
 bool jumpAllowed = na(previousPrice) or maxSingleBarJumpPips <= 0.0 or math.abs(close - previousPrice) / pip <= maxSingleBarJumpPips
 if acceptedBar and jumpAllowed
+    lastSampleTime := sampleTime
     array.set(prices, nextSlot, close)
     nextSlot := (nextSlot + 1) % CAPACITY
     sampleCount := math.min(sampleCount + 1, CAPACITY)
@@ -76,7 +84,7 @@ else if acceptedBar and not jumpAllowed
 float momentumPips = na
 float windowRangePips = na
 bool volatilityAllowed = false
-if sampleCount >= tickWindow
+if acceptedBar and jumpAllowed and sampleCount >= tickWindow
     int oldestSlot = (nextSlot - tickWindow + CAPACITY) % CAPACITY
     momentumPips := (close - array.get(prices, oldestSlot)) / pip
     float lowest = close
@@ -93,7 +101,8 @@ int dayId = year(sampleTime, sessionTimezone) * 10000 + month(sampleTime, sessio
 if na(activeDay) or dayId != activeDay
     activeDay := dayId
     entriesToday := 0
-    dayStartEquity := strategy.equity
+    // Previous close includes the first evaluated bar's change in this day's P&L.
+    dayStartEquity := nz(strategy.equity[1], strategy.initial_capital)
     dailyLossLocked := false
 
 float dailyPnlPercent = not na(dayStartEquity) and dayStartEquity > 0.0 ? (strategy.equity - dayStartEquity) / dayStartEquity * 100.0 : na
@@ -112,7 +121,7 @@ if acceptedBar and jumpAllowed and not na(momentumPips) and volatilityAllowed
 
 bool cooldownPassed = na(lastEntryTime) or sampleTime - lastEntryTime >= cooldownSeconds * 1000
 bool dailyLimitPassed = entriesToday < maxTradesPerDay
-int stopTicks = int(math.max(1, math.floor(stopLossPips * pip / syminfo.mintick)))
+int stopTicks = int(math.max(1, math.round(stopLossPips * pip / syminfo.mintick)))
 int targetTicks = int(math.max(1, math.round(takeProfitPips * pip / syminfo.mintick)))
 float riskPerUnit = strategy.convert_to_account(stopTicks * syminfo.mintick * syminfo.pointvalue)
 float riskBudget = strategy.equity * riskPercent / 100.0
