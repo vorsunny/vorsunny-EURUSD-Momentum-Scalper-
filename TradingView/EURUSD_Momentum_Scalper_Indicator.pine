@@ -1,5 +1,5 @@
 //@version=6
-indicator("EURUSD Momentum Scalper TV Companion v2.0", shorttitle="EUR Mom", overlay=true, max_labels_count=50)
+indicator("EURUSD Momentum Scalper TV Companion v2.1", shorttitle="EUR Mom", overlay=true, max_labels_count=50)
 
 // Signals and alerting only. Pine indicators cannot submit broker orders or enforce account risk.
 int tickWindow = input.int(30, "Rolling sample window", minval=2, maxval=512)
@@ -144,6 +144,14 @@ if candidateDirection != 0
         signalsToday += 1
         latestStop := sampledPrice - candidateDirection * stopLossPips * pip
         latestTarget := sampledPrice + candidateDirection * takeProfitPips * pip
+        string directionText = candidateDirection > 0 ? "BUY" : "SELL"
+        string detailedAlert = "EURUSD Momentum Scalper " + directionText +
+          " | momentum=" + str.tostring(momentumPips, "#.###") + " pips" +
+          " | price=" + str.tostring(sampledPrice, format.mintick) +
+          " | stop=" + str.tostring(latestStop, format.mintick) +
+          " | target=" + str.tostring(latestTarget, format.mintick) +
+          " | spread assumption=" + str.tostring(assumedSpreadPips, "#.##") + " pips"
+        alert(detailedAlert, alert.freq_all)
 
 plotshape(buyPulse, title="Momentum BUY", style=shape.labelup, location=location.belowbar, color=color.new(color.green, 0), text="BUY", textcolor=color.white, size=size.tiny)
 plotshape(sellPulse, title="Momentum SELL", style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 0), text="SELL", textcolor=color.white, size=size.tiny)

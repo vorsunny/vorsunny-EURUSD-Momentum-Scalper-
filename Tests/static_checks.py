@@ -59,6 +59,7 @@ class ProjectChecks(unittest.TestCase):
         self.assertIn("indicator(", pine)
         self.assertIn("alertcondition(buyEvent", pine)
         self.assertIn("alertcondition(sellEvent", pine)
+        self.assertIn("alert(detailedAlert, alert.freq_all)", pine)
         self.assertIn("varip array<float>", pine)
         self.assertNotIn("strategy(", pine)
         self.assertNotRegex(pine, r"strategy\.(entry|exit|order)\(")

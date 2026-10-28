@@ -10,6 +10,10 @@
 - Paired the Pine indicator and Strategy Tester scripts with the cTrader port's shared default parameters.
 - Clarified that Pine uses chart-close samples and bar-based historical testing, while the cTrader cBot uses tick midpoint samples.
 
+## TradingView companion 2.1
+
+- Added detailed realtime alert messages so signal events can be reviewed in TradingView's Alerts Log after the chart is closed or reloaded.
+
 ## TradingView improvements
 
 - Recover from large price jumps by clearing and rebuilding the sample window.

@@ -1,6 +1,6 @@
 # TradingView companion version 2.0
 
-The two Pine scripts are the TradingView companion to the cTrader cBot. The chart indicator runs on live chart updates and shows BUY/SELL markers, alert conditions, and indicative stop and target levels. The separate strategy runs in Strategy Tester. Both use the same default threshold, stop, target, cooldown, daily trade cap, spread assumption, volatility ceiling, jump ceiling, UTC session inputs and EURUSD restriction as the cTrader version where those controls can be represented.
+The two Pine scripts are the TradingView companion to the cTrader cBot. The chart indicator runs on live chart updates and shows BUY/SELL markers, alert conditions, and indicative stop and target levels. Version 2.1 also sends a detailed `alert()` message for each signal, including direction, momentum, signal price, stop, target, and assumed spread. The separate strategy runs in Strategy Tester. Both use the same default threshold, stop, target, cooldown, daily trade cap, spread assumption, volatility ceiling, jump ceiling, UTC session inputs and EURUSD restriction as the cTrader version where those controls can be represented.
 
 The scripts cannot produce identical results to cTrader. The indicator samples the chart's latest close on live updates; the cTrader bot samples bid/ask midpoint ticks. The Strategy Tester script samples one close per historical bar, not ticks. Pine therefore cannot reproduce cTrader's tick activity filter, real spread stream, timer exit, account-wide equity circuit breaker or exact order execution. Use the same shared parameter values for a useful strategy comparison, then treat TradingView's report as a bar-based screening result.
 
@@ -21,7 +21,7 @@ Pine indicators can display signals and raise alerts but cannot submit or manage
 
 TradingView only executes the script when chart updates arrive, so it cannot detect a stale feed while no updates are occurring. Sessions and the daily signal counter use the selected IANA timezone, not necessarily broker server time. Realtime update behavior depends on the data feed, chart type, and TradingView plan. This indicator is for signal visualization and controlled alert testing; it does not prove profitability or reproduce cTrader cBot backtests.
 
-Realtime updates and intrabar signals are not retained as historical tick data after a reload. The realtime buffer warms up again and past realtime markers may disappear; record alerts externally if you need an audit trail.
+The live tick buffer is held in Pine's runtime memory; chart reloads restart that buffer, and Pine cannot reconstruct exact prior tick signals as chart labels. For a persistent event record, create a TradingView alert using **Any alert() function call**. Its detailed events remain in the TradingView Alerts Log while the alert is active. The alert runs independently of the open chart, but the on-chart markers appear only while the chart script is running. If you instead choose an **alertcondition** for BUY or SELL, do not also choose **Any alert() function call** for the same indicator, or each signal may notify twice. Recreate alerts after changing the script or its inputs so the alert uses the updated version.
 
 
 ## Strategy Tester backtest
