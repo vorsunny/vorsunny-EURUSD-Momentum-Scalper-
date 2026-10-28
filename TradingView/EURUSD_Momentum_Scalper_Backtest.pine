@@ -45,8 +45,6 @@ var int activeDay = na
 var int entriesToday = 0
 var float dayStartEquity = na
 var bool dailyLossLocked = false
-var float lastStop = na
-var float lastTarget = na
 
 int sampleTime = time_close
 int hourNow = hour(sampleTime, sessionTimezone)
@@ -57,7 +55,7 @@ int sessionEnd = sessionEndHour * 60 + sessionEndMinute
 bool sessionAllowed = not sessionFilterEnabled or sessionStart == sessionEnd or (sessionStart < sessionEnd ? minuteOfDay >= sessionStart and minuteOfDay < sessionEnd : minuteOfDay >= sessionStart or minuteOfDay < sessionEnd)
 bool spreadAllowed = maxSpreadPips <= 0.0 or assumedSpreadPips <= maxSpreadPips
 bool validPrice = not na(close) and close > 0.0 and pip > 0.0
-bool acceptedBar = barstate.isconfirmed and symbolAllowed and validPrice and spreadAllowed and sessionAllowed
+bool acceptedBar = barstate.isconfirmed and chart.is_standard and symbolAllowed and validPrice and spreadAllowed and sessionAllowed
 
 float previousPrice = na
 if sampleCount > 0
@@ -132,8 +130,6 @@ if candidateDirection != 0
         enteredShort := candidateDirection < 0
         lastEntryTime := sampleTime
         entriesToday += 1
-        lastStop := close - candidateDirection * stopTicks * syminfo.mintick
-        lastTarget := close + candidateDirection * targetTicks * syminfo.mintick
         if candidateDirection > 0
             strategy.entry("Long", strategy.long, qty=quantity, comment="Momentum BUY")
             strategy.exit("Long bracket", from_entry="Long", loss=stopTicks, profit=targetTicks)
@@ -147,15 +143,18 @@ if strategy.opentrades > 0 and not (dailyLossLocked and closeOnDailyLoss)
     if time_close - openedAt >= maxHoldSeconds * 1000
         strategy.close_all(comment="Maximum holding time")
 
-plot(lastStop, title="Latest indicative stop", color=color.new(color.red, 15), linewidth=1, style=plot.style_linebr)
-plot(lastTarget, title="Latest indicative target", color=color.new(color.green, 15), linewidth=1, style=plot.style_linebr)
+float positionDirection = math.sign(strategy.position_size)
+float activeStop = positionDirection != 0 ? strategy.position_avg_price - positionDirection * stopTicks * syminfo.mintick : na
+float activeTarget = positionDirection != 0 ? strategy.position_avg_price + positionDirection * targetTicks * syminfo.mintick : na
+plot(activeStop, title="Simulated position stop", color=color.new(color.red, 15), linewidth=1, style=plot.style_linebr)
+plot(activeTarget, title="Simulated position target", color=color.new(color.green, 15), linewidth=1, style=plot.style_linebr)
 plot(momentumPips, title="Momentum (pips)", color=color.new(color.blue, 100), display=display.data_window)
 plotchar(enteredLong, title="BUY order submitted", char="▲", location=location.belowbar, color=color.green, size=size.tiny)
 plotchar(enteredShort, title="SELL order submitted", char="▼", location=location.abovebar, color=color.red, size=size.tiny)
 
 var table status = table.new(position.top_right, 2, 5, border_width=1)
 if barstate.islast
-    string signalState = not symbolAllowed ? "EURUSD required" : not validPrice ? "Invalid price" : not spreadAllowed ? "Spread blocked" : not sessionAllowed ? "Outside session" : sampleCount < tickWindow ? "Warming buffer" : not jumpAllowed ? "Price jump filtered" : not volatilityAllowed ? "Volatility blocked" : dailyLossLocked ? "Daily loss locked" : entriesToday >= maxTradesPerDay ? "Daily trade limit" : not cooldownPassed ? "Entry cooldown" : not flat ? "Position open" : not quantityAllowed ? "Risk size below minimum" : "Ready"
+    string signalState = not chart.is_standard ? "Use standard candles" : not symbolAllowed ? "EURUSD required" : not validPrice ? "Invalid price" : not spreadAllowed ? "Spread blocked" : not sessionAllowed ? "Outside session" : sampleCount < tickWindow ? "Warming buffer" : not jumpAllowed ? "Price jump filtered" : not volatilityAllowed ? "Volatility blocked" : dailyLossLocked ? "Daily loss locked" : entriesToday >= maxTradesPerDay ? "Daily trade limit" : not cooldownPassed ? "Entry cooldown" : not flat ? "Position open" : not quantityAllowed ? "Risk size below minimum" : "Ready"
     string momentumText = na(momentumPips) ? "Unavailable" : str.tostring(momentumPips, "#.###") + " pips"
     string dailyText = na(dailyPnlPercent) ? "Unavailable" : str.tostring(dailyPnlPercent, "#.##") + "%"
     table.cell(status, 0, 0, "Momentum proxy", bgcolor=color.new(color.blue, 65), text_color=color.white)

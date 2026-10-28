@@ -58,7 +58,7 @@ if na(seenBar) or bar_index != seenBar
 
 bool useRealtimeTicks = samplingMode == "Realtime updates"
 bool sampleNow = useRealtimeTicks ? barstate.isrealtime : barstate.isconfirmed
-int sampleTime = barstate.isrealtime ? timenow : time_close
+int sampleTime = useRealtimeTicks and barstate.isrealtime ? timenow : time_close
 int hourNow = hour(sampleTime, sessionTimezone)
 int minuteNow = minute(sampleTime, sessionTimezone)
 int minuteOfDay = hourNow * 60 + minuteNow
@@ -116,7 +116,7 @@ if acceptedSample and sampleCount >= tickWindow
     activityAllowed := not useRealtimeTicks or activeSamples >= minSamplesPerMinute
 
 int dayId = year(sampleTime, sessionTimezone) * 10000 + month(sampleTime, sessionTimezone) * 100 + dayofmonth(sampleTime, sessionTimezone)
-if na(activeDay) or dayId != activeDay
+if sampleNow and (na(activeDay) or dayId != activeDay)
     activeDay := dayId
     signalsToday := 0
 
@@ -158,7 +158,7 @@ var table status = table.new(position.top_right, 2, 4, border_width=1)
 if barstate.islast
     string modeText = useRealtimeTicks ? "Realtime updates" : "Bar-close proxy"
     string momentumText = na(momentumPips) ? "Warming / unavailable" : str.tostring(momentumPips, "#.###") + " pips"
-    string filterText = not symbolAllowed ? "EURUSD required" : not spreadAllowed ? "Spread assumption blocked" : not sessionAllowed ? "Outside session" : sampleCount < tickWindow ? "Warming buffer" : not volatilityAllowed ? "Volatility blocked" : (useRealtimeTicks and not activityAllowed) ? "Activity below minimum" : "Ready"
+    string filterText = not symbolAllowed ? "EURUSD required" : not sampleNow ? "Waiting for bar close" : not spreadAllowed ? "Spread assumption blocked" : not sessionAllowed ? "Outside session" : sampleCount < tickWindow ? "Warming buffer" : not volatilityAllowed ? "Volatility blocked" : (useRealtimeTicks and not activityAllowed) ? "Activity below minimum" : "Ready"
     table.cell(status, 0, 0, "EURUSD Momentum", bgcolor=color.new(color.blue, 65), text_color=color.white)
     table.cell(status, 1, 0, modeText, bgcolor=color.new(color.blue, 65), text_color=color.white)
     table.cell(status, 0, 1, "Momentum", text_color=color.white)
