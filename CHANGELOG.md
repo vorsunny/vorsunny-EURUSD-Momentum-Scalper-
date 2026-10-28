@@ -5,6 +5,11 @@
 - Added a C# cBot and chart indicator based on the rolling-tick momentum strategy.
 - Added cTrader install, backtest, risk-scope, persistence, and validation notes.
 
+## TradingView companion 2.0 — 2026-10-28
+
+- Paired the Pine indicator and Strategy Tester scripts with the cTrader port's shared default parameters.
+- Clarified that Pine uses chart-close samples and bar-based historical testing, while the cTrader cBot uses tick midpoint samples.
+
 ## TradingView improvements
 
 - Recover from large price jumps by clearing and rebuilding the sample window.
