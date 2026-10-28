@@ -2,7 +2,7 @@
 
 Native MQL5 tick-momentum Expert Advisor for controlled MetaTrader 5 demo validation. Version 1.0.
 
-The EA uses a fixed rolling tick window, configurable market filters, independent risk sizing, a daily loss circuit breaker, bounded trade submission, and timer-driven position exits. Demo-account-only protection is enabled by default. No profitability claim is made; compile, test, and validate against your broker before any use.
+The MT5 EA and cTrader port use a fixed rolling tick window, configurable market filters, risk-based volume sizing, a daily loss circuit breaker, and timed exits. Demo-account-only protection is enabled by default in the automated bots. No profitability claim is made; compile, test, and validate against your broker before any use.
 
 ## Project files
 
@@ -14,6 +14,7 @@ The EA uses a fixed rolling tick window, configurable market filters, independen
 - [TradingView indicator](TradingView/EURUSD_Momentum_Scalper_Indicator.pine)
 - [TradingView backtest strategy](TradingView/EURUSD_Momentum_Scalper_Backtest.pine)
 - [TradingView setup and limitations](Docs/TRADINGVIEW.md)
+- [cTrader C# cBot and indicator](Docs/CTRADER.md)
 - [EA source](Experts/EURUSD_Momentum_Scalper.mq5)
 - [Default settings](Config/EURUSD_Default.set)
 

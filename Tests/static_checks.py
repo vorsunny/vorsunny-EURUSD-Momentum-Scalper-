@@ -19,6 +19,8 @@ class ProjectChecks(unittest.TestCase):
             "Docs/README.md", "Docs/STRATEGY.md", "Docs/RISK.md",
             "Docs/BACKTEST.md", "Docs/TRADINGVIEW.md", "TradingView/EURUSD_Momentum_Scalper_Indicator.pine",
             "TradingView/EURUSD_Momentum_Scalper_Backtest.pine",
+            "cTrader/cBots/EURUSD_Momentum_Scalper_cBot.cs",
+            "cTrader/Indicators/EURUSD_Momentum_Scalper_Indicator.cs",
             "Tests/TEST_PLAN.md", "Tests/UnitTests.mq5",
         ]
         for item in expected:
@@ -76,6 +78,19 @@ class ProjectChecks(unittest.TestCase):
                 title = re.search(r'shorttitle\s*=\s*"([^"]*)"', source)
                 self.assertIsNotNone(title)
                 self.assertLessEqual(len(title.group(1)), 10)
+
+    def test_ctrader_safety_and_api_flow(self):
+        bot = (ROOT / "cTrader/cBots/EURUSD_Momentum_Scalper_cBot.cs").read_text()
+        self.assertIn('DefaultValue = true, Group = "Safety"', bot)
+        self.assertIn("DemoOnly && Account.IsLive", bot)
+        self.assertIn("VolumeForProportionalRisk", bot)
+        self.assertIn("GetEstimatedMargin", bot)
+        self.assertIn("ExecuteMarketRangeOrder", bot)
+        self.assertIn("LocalStorage.Flush", bot)
+        self.assertIn("protected override void OnTimer()", bot)
+        indicator = (ROOT / "cTrader/Indicators/EURUSD_Momentum_Scalper_Indicator.cs").read_text()
+        self.assertIn("IsLastBar", indicator)
+        self.assertIn("Chart.DrawHorizontalLine", indicator)
 
     def test_braces_balance(self):
         paths = list((ROOT / "Experts").glob("*.mq5")) + list((ROOT / "Include").rglob("*.mqh")) + list((ROOT / "Tests").glob("*.mq5")) + list((ROOT / "TradingView").glob("*.pine"))

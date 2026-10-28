@@ -13,6 +13,7 @@ This is a strategy implementation, not evidence of profitability. It is intended
 - `Tests/static_checks.py` — repository checks that can run outside MT5.
 - `Tests/TEST_PLAN.md` — broker/terminal test matrix.
 - `Docs/STRATEGY.md`, `Docs/RISK.md`, `Docs/BACKTEST.md` — methodology and limitations.
+- `cTrader/` and `Docs/CTRADER.md` — C# cBot/indicator port and cTrader install/backtest guide.
 
 ## Install and compile
 

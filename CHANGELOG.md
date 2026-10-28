@@ -1,5 +1,10 @@
 # Changelog
 
+## cTrader port — 2026-10-28
+
+- Added a C# cBot and chart indicator based on the rolling-tick momentum strategy.
+- Added cTrader install, backtest, risk-scope, persistence, and validation notes.
+
 ## TradingView improvements
 
 - Recover from large price jumps by clearing and rebuilding the sample window.
