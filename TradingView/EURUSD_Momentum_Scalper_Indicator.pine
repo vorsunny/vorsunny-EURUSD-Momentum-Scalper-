@@ -198,7 +198,8 @@ if ms_can_signal(candidate, sampleTime, lastSignalTime, cooldownSeconds, signals
     alert(detailedAlert, alert.freq_all)
 
 // Compute display state AFTER event updates, including the event that hit the cap.
-int cooldownRemaining = ms_cooldown(sampleTime, lastSignalTime, cooldownSeconds)
+int displayTime = barstate.isrealtime ? timenow : sampleTime
+int cooldownRemaining = ms_cooldown(displayTime, lastSignalTime, cooldownSeconds)
 bool dailyLimitPassed = signalsToday < maxSignalsPerDay
 string state = not chartAllowed ? "Use standard time-based candles" : not symbolAllowed ? "EURUSD required" : not validPrice ? "Invalid quote/time" : not sampleNow ? "Waiting for bar close" : not spreadAllowed ? "Spread assumption blocked" : not sessionAllowed ? "Outside session" : not dailyLimitPassed ? "Daily signal limit" : resetReason == 2 ? "Price jump: window reset" : sampleCount < tickWindow ? "Warming buffer" : cooldownRemaining > 0 ? "Signal cooldown" : not volatilityAllowed ? "Volatility blocked" : not activityAllowed ? "Activity below minimum" : "Ready"
 plotshape(buyPulse, title="Momentum BUY", style=shape.labelup, location=location.belowbar, color=color.green, text="BUY", textcolor=color.white, size=size.tiny)
